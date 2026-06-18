@@ -82,6 +82,12 @@
       cursor: pointer;
     }
 
+    button:disabled {
+      cursor: wait;
+      opacity: 0.7;
+      transform: none;
+    }
+
     .app {
       position: relative;
       z-index: 1;
@@ -216,12 +222,27 @@
       margin-top: 18px;
     }
 
+    .auth-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 18px;
+    }
+
     .error {
       min-height: 20px;
       margin: 12px 0 0;
       color: #fecaca;
       font-size: 0.9rem;
       font-weight: 600;
+    }
+
+    .status {
+      min-height: 20px;
+      margin: 12px 0 0;
+      color: var(--violet-soft);
+      font-size: 0.9rem;
+      font-weight: 700;
     }
 
     .topbar {
@@ -622,6 +643,10 @@
       .composer .btn {
         width: 100%;
       }
+
+      .auth-actions {
+        grid-template-columns: 1fr;
+      }
     }
   </style>
 </head>
@@ -631,13 +656,25 @@
       <form id="loginForm" class="login-card glass">
         <div class="brand-mark" aria-hidden="true">Z</div>
         <h1>Zorii</h1>
-        <p>Entre dans des rooms lumineuses, discute en direct et crée ton coin de conversation.</p>
+        <p>Connecte ton compte, retrouve tes rooms et discute en direct avec la communaute Zorii.</p>
+        <div class="field">
+          <label for="emailInput">Email</label>
+          <input id="emailInput" type="email" autocomplete="email" placeholder="toi@zorii.app" required>
+        </div>
+        <div class="field">
+          <label for="passwordInput">Mot de passe</label>
+          <input id="passwordInput" type="password" autocomplete="current-password" minlength="6" placeholder="6 caracteres minimum" required>
+        </div>
         <div class="field">
           <label for="usernameInput">Pseudo</label>
-          <input id="usernameInput" type="text" autocomplete="nickname" minlength="2" maxlength="22" placeholder="Ex. Nova" required>
+          <input id="usernameInput" type="text" autocomplete="nickname" minlength="2" maxlength="22" placeholder="Ex. Nova">
         </div>
-        <button class="btn login-btn" type="submit">Entrer</button>
+        <div class="auth-actions">
+          <button id="signinBtn" class="btn" type="submit">Connexion</button>
+          <button id="signupBtn" class="btn secondary" type="button">Creer</button>
+        </div>
         <p id="loginError" class="error" aria-live="polite"></p>
+        <p id="authStatus" class="status" aria-live="polite"></p>
       </form>
     </section>
 
@@ -713,58 +750,84 @@
     </section>
   </main>
 
-  <script>
-    const storageKey = "zorii-state-v1";
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
+    import { getAnalytics, isSupported as analyticsSupported } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-analytics.js";
+    import {
+      getAuth,
+      createUserWithEmailAndPassword,
+      signInWithEmailAndPassword,
+      signOut,
+      onAuthStateChanged,
+      updateProfile
+    } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
+    import {
+      getFirestore,
+      addDoc,
+      collection,
+      doc,
+      getDoc,
+      getDocs,
+      increment,
+      limit,
+      onSnapshot,
+      orderBy,
+      query,
+      serverTimestamp,
+      setDoc,
+      updateDoc
+    } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyDaWhU68yjghUgm8HBlbs9Ngj3ii46jthE",
+      authDomain: "zorii-c1a38.firebaseapp.com",
+      projectId: "zorii-c1a38",
+      storageBucket: "zorii-c1a38.firebasestorage.app",
+      messagingSenderId: "576444699642",
+      appId: "1:576444699642:web:1fcf66eb88a06e181d8a43",
+      measurementId: "G-C2M2LJRZTG"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+
+    analyticsSupported().then((supported) => {
+      if (supported) getAnalytics(app);
+    }).catch(() => {});
+
     const people = ["Mira", "Sacha", "Eli", "Noor", "Lio", "Iris", "Kyan", "Ava"];
     const palette = ["#7c3aed", "#3b82f6", "#a78bfa", "#2563eb", "#8b5cf6", "#06b6d4"];
-
     const seedRooms = [
-      {
-        id: crypto.randomUUID(),
-        name: "Lounge Violet",
-        members: 18,
-        messages: [
-          { author: "Mira", text: "Bienvenue dans le salon principal.", mine: false },
-          { author: "Sacha", text: "Quelqu'un teste déjà la nouvelle interface ?", mine: false }
-        ]
-      },
-      {
-        id: crypto.randomUUID(),
-        name: "Créateurs",
-        members: 11,
-        messages: [
-          { author: "Noor", text: "Je partage des idées de visuels ce soir.", mine: false },
-          { author: "Eli", text: "Le dégradé violet bleu fonctionne super bien.", mine: false }
-        ]
-      },
-      {
-        id: crypto.randomUUID(),
-        name: "Tech & Café",
-        members: 24,
-        messages: [
-          { author: "Lio", text: "Vanilla JS, propre et rapide.", mine: false },
-          { author: "Iris", text: "Je veux voir les animations de hover.", mine: false }
-        ]
-      },
-      {
-        id: crypto.randomUUID(),
-        name: "After Dark",
-        members: 9,
-        messages: [
-          { author: "Kyan", text: "Ambiance nocturne activée.", mine: false }
-        ]
-      }
+      { name: "Lounge Violet", members: 18, author: "Mira", text: "Bienvenue dans le salon principal." },
+      { name: "Createurs", members: 11, author: "Noor", text: "Je partage des idees de visuels ce soir." },
+      { name: "Tech & Cafe", members: 24, author: "Lio", text: "Vanilla JS, propre et rapide." },
+      { name: "After Dark", members: 9, author: "Kyan", text: "Ambiance nocturne activee." }
     ];
 
-    const state = loadState();
+    const state = {
+      user: null,
+      username: "",
+      rooms: [],
+      messages: []
+    };
+
     let activeRoomId = null;
+    let pendingUsername = "";
+    let unsubscribeRooms = null;
+    let unsubscribeMessages = null;
 
     const loginScreen = document.querySelector("#loginScreen");
     const hubScreen = document.querySelector("#hubScreen");
     const roomScreen = document.querySelector("#roomScreen");
     const loginForm = document.querySelector("#loginForm");
+    const emailInput = document.querySelector("#emailInput");
+    const passwordInput = document.querySelector("#passwordInput");
     const usernameInput = document.querySelector("#usernameInput");
+    const signinBtn = document.querySelector("#signinBtn");
+    const signupBtn = document.querySelector("#signupBtn");
     const loginError = document.querySelector("#loginError");
+    const authStatus = document.querySelector("#authStatus");
     const currentUser = document.querySelector("#currentUser");
     const logoutBtn = document.querySelector("#logoutBtn");
     const logoutBtnRoom = document.querySelector("#logoutBtnRoom");
@@ -783,44 +846,15 @@
     const messageForm = document.querySelector("#messageForm");
     const messageInput = document.querySelector("#messageInput");
 
-    function loadState() {
-      try {
-        const stored = JSON.parse(localStorage.getItem(storageKey));
-        if (stored && Array.isArray(stored.rooms)) {
-          return stored;
-        }
-      } catch (error) {
-        localStorage.removeItem(storageKey);
-      }
-
-      return {
-        username: "",
-        rooms: seedRooms
-      };
-    }
-
-    function saveState() {
-      localStorage.setItem(storageKey, JSON.stringify(state));
-    }
-
     function showScreen(screen) {
       [loginScreen, hubScreen, roomScreen].forEach((item) => item.classList.remove("active"));
       screen.classList.add("active");
     }
 
-    function setUser(username) {
-      state.username = username.trim();
-      saveState();
-      currentUser.textContent = state.username;
-    }
-
-    function logout() {
-      state.username = "";
-      activeRoomId = null;
-      saveState();
-      usernameInput.value = "";
-      showScreen(loginScreen);
-      usernameInput.focus();
+    function setBusy(isBusy, label = "") {
+      signinBtn.disabled = isBusy;
+      signupBtn.disabled = isBusy;
+      authStatus.textContent = label;
     }
 
     function getRoom(id) {
@@ -828,19 +862,19 @@
     }
 
     function roomPreview(room) {
-      const last = room.messages.at(-1);
-      return last ? `${last.author}: ${last.text}` : "Aucun message pour le moment.";
+      if (room.lastMessageText) return `${room.lastMessageAuthor || "Zorii"}: ${room.lastMessageText}`;
+      return "Aucun message pour le moment.";
     }
 
     function renderHub() {
-      currentUser.textContent = state.username;
+      currentUser.textContent = state.username || state.user?.email || "";
       roomCount.textContent = state.rooms.length;
-      memberCount.textContent = state.rooms.reduce((sum, room) => sum + room.members, 0);
-      messageCount.textContent = state.rooms.reduce((sum, room) => sum + room.messages.length, 0);
+      memberCount.textContent = state.rooms.reduce((sum, room) => sum + Number(room.members || 0), 0);
+      messageCount.textContent = state.rooms.reduce((sum, room) => sum + Number(room.messageCount || 0), 0);
       roomsList.innerHTML = "";
 
       if (!state.rooms.length) {
-        roomsList.innerHTML = '<div class="empty-state glass">Aucune room active.</div>';
+        roomsList.innerHTML = '<div class="empty-state glass">Chargement des rooms...</div>';
         return;
       }
 
@@ -850,7 +884,7 @@
         card.innerHTML = `
           <div class="room-main">
             <h3>${escapeHTML(room.name)}</h3>
-            <span class="members">${room.members} membres</span>
+            <span class="members">${Number(room.members || 0)} membres</span>
           </div>
           <p class="preview">${escapeHTML(roomPreview(room))}</p>
           <button class="btn" type="button">Rejoindre</button>
@@ -860,22 +894,15 @@
       });
     }
 
-    function openRoom(roomId) {
-      activeRoomId = roomId;
-      renderRoom();
-      showScreen(roomScreen);
-      setTimeout(() => messageInput.focus(), 50);
-    }
-
     function renderRoom() {
       const room = getRoom(activeRoomId);
       if (!room) {
-        showScreen(hubScreen);
+        if (state.rooms.length) showScreen(hubScreen);
         return;
       }
 
       roomTitle.textContent = room.name;
-      roomMembers.textContent = `${room.members} membres connectés`;
+      roomMembers.textContent = `${Number(room.members || 0)} membres connectes`;
       avatarRow.innerHTML = "";
       people.slice(0, 5).forEach((name, index) => {
         const avatar = document.createElement("div");
@@ -887,14 +914,15 @@
       });
 
       messagesList.innerHTML = "";
-      if (!room.messages.length) {
+      if (!state.messages.length) {
         messagesList.innerHTML = '<div class="empty-state">La room attend son premier message.</div>';
       } else {
-        room.messages.forEach((message) => {
+        state.messages.forEach((message) => {
+          const mine = message.uid === state.user?.uid;
           const item = document.createElement("div");
-          item.className = `message ${message.mine ? "mine" : "theirs"}`;
+          item.className = `message ${mine ? "mine" : "theirs"}`;
           item.innerHTML = `
-            <span class="author">${escapeHTML(message.author)}</span>
+            <span class="author">${escapeHTML(message.author || "Anonyme")}</span>
             <div class="bubble">${escapeHTML(message.text)}</div>
           `;
           messagesList.appendChild(item);
@@ -906,46 +934,185 @@
       });
     }
 
-    function addMessage(text) {
-      const room = getRoom(activeRoomId);
-      if (!room) return;
-
-      room.messages.push({
-        author: state.username,
-        text,
-        mine: true
+    function subscribeRooms() {
+      if (unsubscribeRooms) unsubscribeRooms();
+      const roomsQuery = query(collection(db, "rooms"), orderBy("updatedAt", "desc"));
+      unsubscribeRooms = onSnapshot(roomsQuery, (snapshot) => {
+        state.rooms = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
+        renderHub();
+        if (activeRoomId) renderRoom();
+      }, (error) => {
+        roomsList.innerHTML = `<div class="empty-state glass">${escapeHTML(authMessage(error))}</div>`;
       });
-      saveState();
-      renderRoom();
-      renderHub();
-      scheduleReply(room);
     }
 
-    function scheduleReply(room) {
-      const replies = [
-        "Carrément, je te suis.",
-        "Bonne idée pour cette room.",
-        "Je viens de voir ton message.",
-        "Ça donne une vraie ambiance Zorii.",
-        "On continue ici ?"
-      ];
-      const author = people[Math.floor(Math.random() * people.length)];
-      const text = replies[Math.floor(Math.random() * replies.length)];
+    function subscribeMessages(roomId) {
+      if (unsubscribeMessages) unsubscribeMessages();
+      state.messages = [];
+      renderRoom();
 
-      window.setTimeout(() => {
-        const current = getRoom(room.id);
-        if (!current) return;
-        current.messages.push({ author, text, mine: false });
-        saveState();
-        renderHub();
-        if (activeRoomId === current.id && roomScreen.classList.contains("active")) {
-          renderRoom();
-        }
-      }, 900 + Math.random() * 900);
+      const messagesQuery = query(
+        collection(db, "rooms", roomId, "messages"),
+        orderBy("createdAt", "asc")
+      );
+
+      unsubscribeMessages = onSnapshot(messagesQuery, (snapshot) => {
+        state.messages = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
+        renderRoom();
+      }, (error) => {
+        messagesList.innerHTML = `<div class="empty-state">${escapeHTML(authMessage(error))}</div>`;
+      });
+    }
+
+    async function openRoom(roomId) {
+      activeRoomId = roomId;
+      subscribeMessages(roomId);
+      showScreen(roomScreen);
+      setTimeout(() => messageInput.focus(), 50);
+    }
+
+    async function ensureUserProfile(user, username = "") {
+      const userRef = doc(db, "users", user.uid);
+      const snapshot = await getDoc(userRef);
+      const cleanName = username.trim();
+
+      if (!snapshot.exists()) {
+        const displayName = cleanName || user.displayName || user.email.split("@")[0];
+        await setDoc(userRef, {
+          uid: user.uid,
+          email: user.email,
+          username: displayName,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        });
+        if (user.displayName !== displayName) await updateProfile(user, { displayName });
+        return displayName;
+      }
+
+      const profile = snapshot.data();
+      if (cleanName && cleanName !== profile.username) {
+        await setDoc(userRef, {
+          username: cleanName,
+          updatedAt: serverTimestamp()
+        }, { merge: true });
+        if (user.displayName !== cleanName) await updateProfile(user, { displayName: cleanName });
+        return cleanName;
+      }
+
+      return profile.username || user.displayName || user.email.split("@")[0];
+    }
+
+    async function ensureSeedRooms() {
+      const firstRoom = await getDocs(query(collection(db, "rooms"), limit(1)));
+      if (!firstRoom.empty) return;
+
+      for (const room of seedRooms) {
+        const roomRef = await addDoc(collection(db, "rooms"), {
+          name: room.name,
+          members: room.members,
+          messageCount: 1,
+          lastMessageAuthor: room.author,
+          lastMessageText: room.text,
+          createdBy: "seed",
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        });
+
+        await addDoc(collection(db, "rooms", roomRef.id, "messages"), {
+          uid: "seed",
+          author: room.author,
+          text: room.text,
+          createdAt: serverTimestamp()
+        });
+      }
+    }
+
+    async function createAccount() {
+      const email = emailInput.value.trim();
+      const password = passwordInput.value;
+      const username = usernameInput.value.trim();
+
+      if (username.length < 2) {
+        loginError.textContent = "Le pseudo doit contenir au moins 2 caracteres.";
+        return;
+      }
+
+      pendingUsername = username;
+      setBusy(true, "Creation du compte...");
+      loginError.textContent = "";
+
+      try {
+        const credential = await createUserWithEmailAndPassword(auth, email, password);
+        await ensureUserProfile(credential.user, username);
+      } catch (error) {
+        loginError.textContent = authMessage(error);
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    async function signInAccount() {
+      const email = emailInput.value.trim();
+      const password = passwordInput.value;
+
+      pendingUsername = usernameInput.value.trim();
+      setBusy(true, "Connexion...");
+      loginError.textContent = "";
+
+      try {
+        const credential = await signInWithEmailAndPassword(auth, email, password);
+        await ensureUserProfile(credential.user, usernameInput.value.trim());
+      } catch (error) {
+        loginError.textContent = authMessage(error);
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    async function logout() {
+      activeRoomId = null;
+      state.messages = [];
+      if (unsubscribeRooms) unsubscribeRooms();
+      if (unsubscribeMessages) unsubscribeMessages();
+      unsubscribeRooms = null;
+      unsubscribeMessages = null;
+      await signOut(auth);
+    }
+
+    async function addMessage(text) {
+      const room = getRoom(activeRoomId);
+      if (!room || !state.user) return;
+
+      await addDoc(collection(db, "rooms", room.id, "messages"), {
+        uid: state.user.uid,
+        author: state.username,
+        text,
+        createdAt: serverTimestamp()
+      });
+
+      await updateDoc(doc(db, "rooms", room.id), {
+        lastMessageAuthor: state.username,
+        lastMessageText: text,
+        messageCount: increment(1),
+        updatedAt: serverTimestamp()
+      });
+    }
+
+    function authMessage(error) {
+      const code = error?.code || "";
+      const messages = {
+        "auth/email-already-in-use": "Cet email est deja utilise.",
+        "auth/invalid-email": "Email invalide.",
+        "auth/invalid-credential": "Email ou mot de passe incorrect.",
+        "auth/missing-password": "Entre un mot de passe.",
+        "auth/weak-password": "Le mot de passe doit contenir au moins 6 caracteres.",
+        "permission-denied": "Firestore refuse l'acces. Verifie les regles de securite Firebase."
+      };
+      return messages[code] || error?.message || "Une erreur est survenue.";
     }
 
     function escapeHTML(value) {
-      return String(value)
+      return String(value ?? "")
         .replaceAll("&", "&amp;")
         .replaceAll("<", "&lt;")
         .replaceAll(">", "&gt;")
@@ -955,20 +1122,12 @@
 
     loginForm.addEventListener("submit", (event) => {
       event.preventDefault();
-      const username = usernameInput.value.trim();
-
-      if (username.length < 2) {
-        loginError.textContent = "Le pseudo doit contenir au moins 2 caractères.";
-        return;
-      }
-
-      loginError.textContent = "";
-      setUser(username);
-      renderHub();
-      showScreen(hubScreen);
+      signInAccount();
     });
 
-    createRoomForm.addEventListener("submit", (event) => {
+    signupBtn.addEventListener("click", createAccount);
+
+    createRoomForm.addEventListener("submit", async (event) => {
       event.preventDefault();
       const roomName = roomNameInput.value.trim();
 
@@ -977,33 +1136,47 @@
         return;
       }
 
-      const newRoom = {
-        id: crypto.randomUUID(),
+      roomError.textContent = "";
+      const roomRef = await addDoc(collection(db, "rooms"), {
         name: roomName,
         members: Math.floor(5 + Math.random() * 18),
-        messages: [
-          { author: "Zorii", text: `La room ${roomName} vient d'ouvrir.`, mine: false }
-        ]
-      };
+        messageCount: 1,
+        lastMessageAuthor: "Zorii",
+        lastMessageText: `La room ${roomName} vient d'ouvrir.`,
+        createdBy: state.user.uid,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
 
-      state.rooms.unshift(newRoom);
+      await addDoc(collection(db, "rooms", roomRef.id, "messages"), {
+        uid: "system",
+        author: "Zorii",
+        text: `La room ${roomName} vient d'ouvrir.`,
+        createdAt: serverTimestamp()
+      });
+
       roomNameInput.value = "";
-      roomError.textContent = "";
-      saveState();
-      renderHub();
-      openRoom(newRoom.id);
+      openRoom(roomRef.id);
     });
 
-    messageForm.addEventListener("submit", (event) => {
+    messageForm.addEventListener("submit", async (event) => {
       event.preventDefault();
       const text = messageInput.value.trim();
       if (!text) return;
       messageInput.value = "";
-      addMessage(text);
+      try {
+        await addMessage(text);
+      } catch (error) {
+        messageInput.value = text;
+        messagesList.innerHTML = `<div class="empty-state">${escapeHTML(authMessage(error))}</div>`;
+      }
     });
 
     backBtn.addEventListener("click", () => {
       activeRoomId = null;
+      state.messages = [];
+      if (unsubscribeMessages) unsubscribeMessages();
+      unsubscribeMessages = null;
       renderHub();
       showScreen(hubScreen);
     });
@@ -1011,12 +1184,34 @@
     logoutBtn.addEventListener("click", logout);
     logoutBtnRoom.addEventListener("click", logout);
 
-    if (state.username) {
-      renderHub();
-      showScreen(hubScreen);
-    } else {
-      usernameInput.focus();
-    }
+    onAuthStateChanged(auth, async (user) => {
+      if (!user) {
+        state.user = null;
+        state.username = "";
+        state.rooms = [];
+        state.messages = [];
+        activeRoomId = null;
+        emailInput.focus();
+        showScreen(loginScreen);
+        return;
+      }
+
+      state.user = user;
+      setBusy(true, "Synchronisation...");
+      try {
+        state.username = await ensureUserProfile(user, pendingUsername);
+        pendingUsername = "";
+        currentUser.textContent = state.username;
+        await ensureSeedRooms();
+        subscribeRooms();
+        showScreen(hubScreen);
+      } catch (error) {
+        loginError.textContent = authMessage(error);
+        showScreen(loginScreen);
+      } finally {
+        setBusy(false);
+      }
+    });
   </script>
 </body>
 </html>
