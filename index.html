@@ -1,889 +1,1022 @@
 <!DOCTYPE html>
 <html lang="fr">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Zorii</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    
-    <style>
-        :root {
-            --dark-bg: #0a0a1a;
-            --violet: #7c3aed;
-            --violet-light: #a78bfa;
-            --blue: #3b82f6;
-            --off-white: #f8fafc;
-            --card-bg: rgba(26, 26, 46, 0.2);
-            --border-color: rgba(167, 139, 250, 0.3);
-            --text-muted: #94a3b8;
-            --gradient: linear-gradient(135deg, var(--violet), var(--blue));
-        }
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Zorii</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --night: #0a0a1a;
+      --violet: #7c3aed;
+      --violet-soft: #a78bfa;
+      --blue: #3b82f6;
+      --white: #f8fafc;
+      --muted: #b9c2d9;
+      --panel: rgba(248, 250, 252, 0.08);
+      --panel-strong: rgba(248, 250, 252, 0.13);
+      --line: rgba(167, 139, 250, 0.25);
+      --shadow: 0 24px 70px rgba(0, 0, 0, 0.34);
+      --accent: linear-gradient(135deg, #7c3aed, #3b82f6);
+    }
 
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+    * {
+      box-sizing: border-box;
+    }
 
-        body {
-            font-family: 'Inter', sans-serif;
-            background-color: var(--dark-bg);
-            color: var(--off-white);
-            overflow: hidden;
-            position: relative;
-            min-height: 100vh; /* Ensure body takes full height for centering pages */
-        }
-        
-        body::before {
-            content: '';
-            position: absolute;
-            top: -20%;
-            left: -20%;
-            width: 50vw;
-            height: 50vw;
-            background: radial-gradient(circle, rgba(124, 58, 237, 0.3), transparent 70%);
-            filter: blur(100px);
-            z-index: 0;
-        }
+    html {
+      min-height: 100%;
+      scrollbar-width: thin;
+      scrollbar-color: var(--violet) rgba(248, 250, 252, 0.08);
+    }
 
-        body::after {
-            content: '';
-            position: absolute;
-            bottom: -20%;
-            right: -20%;
-            width: 50vw;
-            height: 50vw;
-            background: radial-gradient(circle, rgba(59, 130, 246, 0.2), transparent 70%);
-            filter: blur(100px);
-            z-index: 0;
-        }
+    body {
+      min-height: 100vh;
+      margin: 0;
+      color: var(--white);
+      font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background:
+        radial-gradient(circle at 16% 12%, rgba(124, 58, 237, 0.36), transparent 28rem),
+        radial-gradient(circle at 86% 22%, rgba(59, 130, 246, 0.3), transparent 30rem),
+        radial-gradient(circle at 44% 96%, rgba(167, 139, 250, 0.18), transparent 34rem),
+        var(--night);
+      overflow-x: hidden;
+    }
 
-        .hidden {
-            display: none !important;
-        }
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background-image:
+        linear-gradient(rgba(248, 250, 252, 0.035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(248, 250, 252, 0.035) 1px, transparent 1px);
+      background-size: 46px 46px;
+      mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.68), transparent 88%);
+    }
 
-        .page {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            display: flex;
-            flex-direction: column;
-            z-index: 1;
-        }
-        
-        .container {
-            width: 100%;
-            max-width: 900px;
-            margin: 0 auto;
-            padding: 2rem;
-        }
+    ::-webkit-scrollbar {
+      width: 10px;
+      height: 10px;
+    }
 
-        /* Glassmorphism Card */
-        .glass-card {
-            background: var(--card-bg);
-            border: 1px solid var(--border-color);
-            border-radius: 16px;
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
-        }
+    ::-webkit-scrollbar-track {
+      background: rgba(248, 250, 252, 0.08);
+    }
 
-        /* Buttons and Inputs */
-        .btn {
-            background: var(--gradient);
-            color: var(--off-white);
-            border: none;
-            border-radius: 8px;
-            padding: 12px 24px;
-            font-size: 1rem;
-            font-weight: 600;
-            cursor: pointer;
-            transition: transform 0.2s ease, box-shadow 0.2s ease;
-        }
+    ::-webkit-scrollbar-thumb {
+      background: linear-gradient(180deg, var(--violet), var(--blue));
+      border: 2px solid rgba(10, 10, 26, 0.86);
+      border-radius: 999px;
+    }
 
-        .btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 20px rgba(124, 58, 237, 0.4);
-        }
-        
-        .input-field {
-            background: rgba(0,0,0,0.2);
-            border: 1px solid var(--border-color);
-            border-radius: 8px;
-            padding: 12px;
-            color: var(--off-white);
-            font-size: 1rem;
-            width: 100%;
-        }
+    button,
+    input {
+      font: inherit;
+    }
 
-        .input-field:focus {
-            outline: none;
-            border-color: var(--violet-light);
-        }
+    button {
+      border: 0;
+      cursor: pointer;
+    }
 
-        /* Scrollbar */
-        ::-webkit-scrollbar {
-            width: 8px;
-        }
-        ::-webkit-scrollbar-track {
-            background: var(--dark-bg);
-        }
-        ::-webkit-scrollbar-thumb {
-            background-color: var(--violet);
-            border-radius: 4px;
-        }
-        ::-webkit-scrollbar-thumb:hover {
-            background-color: var(--violet-light);
-        }
+    .app {
+      position: relative;
+      z-index: 1;
+      min-height: 100vh;
+    }
 
-        /* --- Login Page --- */
-        #login-page {
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh; /* Ensure login page content is vertically centered */
-        }
+    .screen {
+      display: none;
+      min-height: 100vh;
+      padding: 24px;
+    }
 
-        .auth-form.hidden {
-            display: none;
-        }
+    .screen.active {
+      display: block;
+    }
 
-        .auth-toggle {
-            margin-top: 1rem;
-            font-size: 0.9rem;
-            color: var(--text-muted);
-        }
+    .login-screen.active {
+      display: grid;
+      place-items: center;
+    }
 
-        .auth-toggle a {
-            color: var(--violet-light);
-            text-decoration: none;
-            cursor: pointer;
-        }
+    .glass {
+      border: 1px solid var(--line);
+      background: linear-gradient(145deg, rgba(248, 250, 252, 0.12), rgba(248, 250, 252, 0.055));
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(22px);
+      -webkit-backdrop-filter: blur(22px);
+    }
 
-        .auth-toggle a:hover {
-            text-decoration: underline;
-        }
+    .login-card {
+      width: min(440px, 100%);
+      padding: 36px;
+      border-radius: 8px;
+    }
 
-        .login-card {
-            width: 100%; /* Make it take full width up to max-width */
-            max-width: 400px;
-            padding: 2.5rem;
-            text-align: center;
-            display: flex;
-            flex-direction: column;
-            gap: 1.5rem;
-        }
+    .brand-mark {
+      display: grid;
+      width: 58px;
+      height: 58px;
+      place-items: center;
+      border-radius: 8px;
+      color: white;
+      font-size: 2rem;
+      font-weight: 800;
+      background: var(--accent);
+      box-shadow: 0 16px 34px rgba(124, 58, 237, 0.36);
+    }
 
-        .login-card h1 {
-            font-size: 2.5rem;
-            font-weight: 700;
-        }
-        
-        .gradient-text {
-            background: var(--gradient);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-            color: transparent;
-        }
+    .login-card h1 {
+      margin: 22px 0 10px;
+      font-size: clamp(2.3rem, 9vw, 4rem);
+      line-height: 0.94;
+      letter-spacing: 0;
+      background: var(--accent);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
 
-        /* --- Hub Page --- */
-        .hub-navbar {
-            position: sticky;
-            top: 0;
-            padding: 1rem 2rem;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            z-index: 10;
-            background: rgba(10, 10, 26, 0.5);
-            backdrop-filter: blur(15px);
-            -webkit-backdrop-filter: blur(15px);
-            border-bottom: 1px solid var(--border-color);
-        }
-        
-        .logo {
-            font-size: 1.5rem;
-            font-weight: 700;
-        }
-        
-        .user-display {
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-            font-weight: 500;
-        }
+    .login-card p {
+      margin: 0 0 26px;
+      color: var(--muted);
+      line-height: 1.6;
+    }
 
-        .online-dot {
-            width: 10px;
-            height: 10px;
-            background-color: #4ade80;
-            border-radius: 50%;
-        }
+    .field {
+      display: grid;
+      gap: 10px;
+    }
 
-        #hub-page .container {
-            display: flex;
-            flex-direction: column;
-            gap: 2rem;
-            flex-grow: 1; /* Allow container to take available space */
-            overflow-y: auto; /* Allow scrolling within the hub content */
-            padding-top: 2rem; /* Give space below navbar */
-            padding-bottom: 2rem; /* Give space at the bottom */
-            -webkit-overflow-scrolling: touch; /* Smooth scrolling on iOS */
-        }
-        
-        .create-room-form {
-            display: flex;
-            flex-wrap: wrap; /* Allow items to wrap on small screens */
-            gap: 1rem;
-        }
+    label {
+      color: var(--white);
+      font-size: 0.92rem;
+      font-weight: 700;
+    }
 
-        .create-room-form .input-field {
-            flex-grow: 1;
-            min-width: 150px; /* Ensure input doesn't get too small */
-        }
-        .create-room-form .btn {
-            flex-shrink: 0; /* Prevent button from shrinking */
-        }
-        
-        .hub-section {
-            margin-top: 2rem;
-        }
+    input {
+      width: 100%;
+      min-height: 50px;
+      border: 1px solid rgba(167, 139, 250, 0.34);
+      border-radius: 8px;
+      outline: none;
+      color: var(--white);
+      background: rgba(10, 10, 26, 0.62);
+      padding: 0 15px;
+      transition: border-color 180ms ease, box-shadow 180ms ease, background 180ms ease;
+    }
 
-        .room-list-container {
-            margin-top: 1rem;
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-            gap: 1.5rem;
-        }
+    input::placeholder {
+      color: rgba(248, 250, 252, 0.42);
+    }
 
-        #search-rooms-form {
-            margin-top: 1rem;
-        }
+    input:focus {
+      border-color: rgba(167, 139, 250, 0.85);
+      background: rgba(10, 10, 26, 0.78);
+      box-shadow: 0 0 0 4px rgba(124, 58, 237, 0.18);
+    }
 
-        /* --- Room Page --- */
-        #room-page {
-            height: 100vh;
-        }
-        
-        .room-header {
-            padding: 1rem 2rem;
-            display: flex;
-            align-items: center;
-            gap: 1rem;
-            background: rgba(10, 10, 26, 0.5);
-            backdrop-filter: blur(15px);
-            -webkit-backdrop-filter: blur(15px);
-            border-bottom: 1px solid var(--border-color);
-            z-index: 5;
-        }
+    .btn {
+      display: inline-flex;
+      min-height: 46px;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      border-radius: 8px;
+      color: white;
+      font-weight: 800;
+      background: var(--accent);
+      box-shadow: 0 14px 28px rgba(59, 130, 246, 0.22);
+      transition: transform 180ms ease, box-shadow 180ms ease, filter 180ms ease;
+    }
 
-        .room-header .back-btn {
-            background: none; border: none; color: var(--off-white); font-size: 1.5rem; cursor: pointer;
-        }
+    .btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 18px 38px rgba(124, 58, 237, 0.32);
+      filter: brightness(1.04);
+    }
 
-        .avatar-group { display: flex; }
-        .avatar {
-            width: 32px; height: 32px; border-radius: 50%; border: 2px solid var(--dark-bg); margin-left: -10px;
-        }
-        .avatar:first-child { margin-left: 0; }
+    .btn:active {
+      transform: translateY(0);
+    }
 
-        .room-header .members-btn {
-            background: rgba(0,0,0,0.2);
-            border: 1px solid var(--border-color);
-            margin-left: auto;
-            padding: 8px 16px;
-        }
+    .btn.secondary {
+      color: var(--white);
+      background: rgba(248, 250, 252, 0.1);
+      box-shadow: none;
+      border: 1px solid rgba(167, 139, 250, 0.22);
+    }
 
-        #members-panel {
-            position: absolute;
-            top: 0;
-            right: 0;
-            width: 100%;
-            max-width: 300px;
-            height: 100%;
-            z-index: 20;
-            transform: translateX(100%);
-            transition: transform 0.3s ease-in-out;
-            padding: 1.5rem;
-            display: flex;
-            flex-direction: column;
-        }
-        
-        #members-panel.open {
-            transform: translateX(0);
-        }
+    .login-btn {
+      width: 100%;
+      margin-top: 18px;
+    }
 
-        #members-panel h3 {
-            margin-bottom: 1rem;
-        }
+    .error {
+      min-height: 20px;
+      margin: 12px 0 0;
+      color: #fecaca;
+      font-size: 0.9rem;
+      font-weight: 600;
+    }
 
-        #member-list {
-            list-style: none;
-            display: flex;
-            flex-direction: column;
-            gap: 0.75rem;
-            overflow-y: auto;
-        }
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin: -24px -24px 28px;
+      padding: 16px clamp(18px, 4vw, 42px);
+      border-bottom: 1px solid rgba(167, 139, 250, 0.2);
+      background: rgba(10, 10, 26, 0.76);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+    }
 
-        .member-item {
-            padding: 10px;
-            background: rgba(0,0,0,0.2);
-            border-radius: 6px;
-        }
+    .brand {
+      display: flex;
+      min-width: 0;
+      align-items: center;
+      gap: 12px;
+    }
 
-        .creator-member {
-            border: 1px solid gold;
-            box-shadow: 0 0 5px gold;
-            color: gold;
-        }
+    .brand .brand-mark {
+      width: 42px;
+      height: 42px;
+      font-size: 1.35rem;
+      flex: 0 0 auto;
+    }
 
-        #messages-container {
-            flex-grow: 1;
-            overflow-y: auto;
-            padding: 1.5rem;
-            display: flex;
-            flex-direction: column;
-            gap: 1rem;
-            -webkit-overflow-scrolling: touch; /* Smooth scrolling on iOS */
-        }
+    .brand-name {
+      font-size: 1.45rem;
+      font-weight: 800;
+      background: var(--accent);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
 
-        .creator-message .message-bubble {
-             box-shadow: 0 0 0 2px gold;
-        }
+    .user-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      min-height: 38px;
+      padding: 0 13px;
+      border: 1px solid rgba(167, 139, 250, 0.22);
+      border-radius: 8px;
+      color: var(--white);
+      background: rgba(248, 250, 252, 0.08);
+      font-weight: 700;
+    }
 
-        .message {
-            display: flex;
-            max-width: 75%;
-            width: fit-content;
-        }
+    .online-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 999px;
+      background: #22c55e;
+      box-shadow: 0 0 0 5px rgba(34, 197, 94, 0.12);
+    }
 
-        .message-bubble {
-            padding: 10px 15px;
-            border-radius: 18px;
-        }
+    .nav-actions {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 10px;
+    }
 
-        .message-sender {
-            font-size: 0.8rem;
-            font-weight: 600;
-            margin-bottom: 5px;
-            color: var(--violet-light);
-        }
+    .layout {
+      width: min(1120px, 100%);
+      margin: 0 auto;
+    }
 
-        .message.sent {
-            align-self: flex-end;
-            flex-direction: row-reverse;
-        }
-        .message.sent .message-bubble {
-            background: var(--gradient);
-            border-top-right-radius: 4px;
-        }
+    .hub-hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1.15fr) minmax(280px, 0.85fr);
+      gap: 18px;
+      margin-bottom: 22px;
+    }
 
-        .message.received .message-bubble {
-            background: #21213a;
-            border-top-left-radius: 4px;
-        }
-        
-        .message-form-container {
-            padding: 1rem;
-            background: rgba(10, 10, 26, 0.5);
-            border-top: 1px solid var(--border-color);
-        }
-        
-        #message-form {
-            display: flex;
-            gap: 1rem;
-            max-width: 900px;
-            margin: 0 auto;
-        }
-        #message-form .input-field {
-            flex-grow: 1;
-        }
+    .panel {
+      border-radius: 8px;
+      padding: 22px;
+    }
 
-        /* ================= MEDIA QUERIES ================= */
-        @media (max-width: 768px) {
-            .container {
-                padding: 1rem; /* Reduce padding on smaller screens */
-            }
-            .hub-navbar, .room-header {
-                padding: 1rem; /* Reduce padding */
-            }
-            #messages-container {
-                padding: 1rem; /* Reduce padding */
-            }
-            .login-card {
-                padding: 2rem 1.5rem; /* Adjust login card padding */
-                margin: 0 1rem; /* Add horizontal margin to prevent touching edges */
-            }
-            .login-card h1 {
-                font-size: 2rem; /* Smaller font for title */
-            }
-            .room-list-container {
-                grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); /* Allow smaller cards */
-            }
-        }
+    .panel h2,
+    .panel h3 {
+      margin: 0;
+    }
 
-        @media (max-width: 480px) {
-            .login-card h1 {
-                font-size: 1.8rem;
-            }
-            .hub-navbar .btn {
-                padding: 6px 12px; /* Smaller logout button */
-            }
-            .hub-navbar .logo, .user-display {
-                font-size: 1.2rem; /* Smaller text for navbar */
-            }
-            .room-list-container {
-                grid-template-columns: 1fr; /* Single column on very small screens */
-            }
-            .create-room-form {
-                flex-direction: column; /* Stack input and button */
-            }
-            .create-room-form .btn {
-                width: 100%; /* Make button full width */
-            }
-            .room-header {
-                flex-wrap: wrap; /* Allow header items to wrap */
-                justify-content: center; /* Center items if wrapped */
-                text-align: center;
-            }
-            .room-header h2 {
-                width: 100%; /* Room name takes full width */
-            }
-            .avatar-group {
-                margin-top: 0.5rem; /* Space if avatars wrap */
-            }
-            .message {
-                max-width: 90%; /* Messages take more width on small screens */
-            }
-        }
+    .panel p {
+      color: var(--muted);
+      line-height: 1.6;
+    }
 
-    </style>
+    .title-row {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 14px;
+      margin-bottom: 16px;
+    }
+
+    .title-row h2 {
+      font-size: clamp(1.65rem, 4vw, 2.5rem);
+      letter-spacing: 0;
+    }
+
+    .stat-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      margin-top: 20px;
+    }
+
+    .stat {
+      min-height: 86px;
+      border: 1px solid rgba(167, 139, 250, 0.18);
+      border-radius: 8px;
+      padding: 14px;
+      background: rgba(10, 10, 26, 0.34);
+    }
+
+    .stat strong {
+      display: block;
+      font-size: 1.5rem;
+    }
+
+    .stat span {
+      color: var(--muted);
+      font-size: 0.84rem;
+    }
+
+    .create-room {
+      display: grid;
+      gap: 12px;
+      align-self: stretch;
+    }
+
+    .room-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .room-card {
+      display: grid;
+      gap: 14px;
+      border: 1px solid rgba(167, 139, 250, 0.21);
+      border-radius: 8px;
+      padding: 18px;
+      background: rgba(248, 250, 252, 0.075);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+      transition: transform 180ms ease, border-color 180ms ease, background 180ms ease;
+    }
+
+    .room-card:hover {
+      transform: translateY(-3px);
+      border-color: rgba(167, 139, 250, 0.48);
+      background: rgba(248, 250, 252, 0.11);
+    }
+
+    .room-main {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .room-main h3 {
+      overflow-wrap: anywhere;
+      font-size: 1.12rem;
+    }
+
+    .members {
+      color: var(--violet-soft);
+      white-space: nowrap;
+      font-weight: 800;
+    }
+
+    .preview {
+      min-height: 48px;
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    .room-card .btn {
+      width: 100%;
+    }
+
+    .room-screen.active {
+      display: grid;
+      grid-template-rows: auto 1fr;
+    }
+
+    .chat-shell {
+      display: grid;
+      width: min(1040px, 100%);
+      min-height: calc(100vh - 124px);
+      margin: 0 auto;
+      grid-template-rows: auto 1fr auto;
+      overflow: hidden;
+      border-radius: 8px;
+    }
+
+    .chat-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 18px 20px;
+      border-bottom: 1px solid rgba(167, 139, 250, 0.2);
+    }
+
+    .room-meta h2 {
+      margin: 0 0 6px;
+      overflow-wrap: anywhere;
+      font-size: 1.45rem;
+    }
+
+    .room-meta span {
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .avatar-row {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      padding-left: 10px;
+    }
+
+    .avatar {
+      display: grid;
+      width: 34px;
+      height: 34px;
+      place-items: center;
+      margin-left: -8px;
+      border: 2px solid rgba(10, 10, 26, 0.84);
+      border-radius: 999px;
+      color: white;
+      font-size: 0.78rem;
+      font-weight: 800;
+      background: var(--accent);
+    }
+
+    .messages {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      overflow-y: auto;
+      padding: 22px;
+      scroll-behavior: smooth;
+    }
+
+    .message {
+      display: grid;
+      max-width: min(72%, 560px);
+      gap: 5px;
+      animation: rise 220ms ease both;
+    }
+
+    @keyframes rise {
+      from {
+        opacity: 0;
+        transform: translateY(8px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .message.mine {
+      align-self: flex-end;
+      justify-items: end;
+    }
+
+    .message.theirs {
+      align-self: flex-start;
+    }
+
+    .author {
+      color: rgba(248, 250, 252, 0.62);
+      font-size: 0.78rem;
+      font-weight: 800;
+    }
+
+    .bubble {
+      border: 1px solid rgba(167, 139, 250, 0.18);
+      border-radius: 8px;
+      padding: 11px 13px;
+      line-height: 1.5;
+      overflow-wrap: anywhere;
+    }
+
+    .mine .bubble {
+      color: white;
+      background: var(--accent);
+      box-shadow: 0 14px 26px rgba(59, 130, 246, 0.2);
+    }
+
+    .theirs .bubble {
+      color: var(--white);
+      background: rgba(10, 10, 26, 0.62);
+    }
+
+    .composer {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      padding: 16px;
+      border-top: 1px solid rgba(167, 139, 250, 0.2);
+      background: rgba(10, 10, 26, 0.38);
+    }
+
+    .empty-state {
+      display: grid;
+      min-height: 180px;
+      place-items: center;
+      color: var(--muted);
+      text-align: center;
+    }
+
+    @media (max-width: 780px) {
+      .screen {
+        padding: 16px;
+      }
+
+      .topbar {
+        margin: -16px -16px 18px;
+        padding: 13px 16px;
+      }
+
+      .brand-name {
+        font-size: 1.2rem;
+      }
+
+      .hub-hero,
+      .room-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .stat-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .chat-shell {
+        min-height: calc(100vh - 104px);
+      }
+
+      .chat-header,
+      .composer {
+        grid-template-columns: 1fr;
+      }
+
+      .message {
+        max-width: 88%;
+      }
+    }
+
+    @media (max-width: 560px) {
+      .login-card,
+      .panel {
+        padding: 20px;
+      }
+
+      .topbar {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .nav-actions {
+        width: 100%;
+      }
+
+      .user-pill,
+      .nav-actions .btn {
+        flex: 1 1 auto;
+      }
+
+      .chat-header {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .avatar-row {
+        justify-content: flex-start;
+        padding-left: 8px;
+      }
+
+      .composer {
+        grid-template-columns: 1fr;
+      }
+
+      .composer .btn {
+        width: 100%;
+      }
+    }
+  </style>
 </head>
 <body>
-
-    <!-- ======== LOGIN PAGE ======== -->
-    <div id="login-page" class="page">
-        <div class="login-card glass-card">
-            <!-- Login Form -->
-            <form id="login-form" class="auth-form">
-                <h1>Connexion à <span class="gradient-text">Zorii</span></h1>
-                <input type="email" id="login-email" class="input-field" placeholder="Email..." required autocomplete="email">
-                <input type="password" id="login-password" class="input-field" placeholder="Mot de passe..." required autocomplete="current-password">
-                <button type="submit" class="btn">Se Connecter</button>
-                <p class="auth-toggle">Pas encore de compte ? <a href="#" id="show-signup">Inscrivez-vous</a></p>
-            </form>
-
-            <!-- Signup Form -->
-            <form id="signup-form" class="auth-form hidden">
-                <h1>Créer un compte</h1>
-                <input type="text" id="signup-name" class="input-field" placeholder="Nom d'utilisateur..." required autocomplete="nickname">
-                <input type="email" id="signup-email" class="input-field" placeholder="Email..." required autocomplete="email">
-                <input type="password" id="signup-password" class="input-field" placeholder="Mot de passe (min. 6 caractères)..." required autocomplete="new-password">
-                <button type="submit" class="btn">S'inscrire</button>
-                <p class="auth-toggle">Déjà un compte ? <a href="#" id="show-login">Connectez-vous</a></p>
-            </form>
+  <main class="app">
+    <section id="loginScreen" class="screen login-screen active" aria-label="Connexion">
+      <form id="loginForm" class="login-card glass">
+        <div class="brand-mark" aria-hidden="true">Z</div>
+        <h1>Zorii</h1>
+        <p>Entre dans des rooms lumineuses, discute en direct et crée ton coin de conversation.</p>
+        <div class="field">
+          <label for="usernameInput">Pseudo</label>
+          <input id="usernameInput" type="text" autocomplete="nickname" minlength="2" maxlength="22" placeholder="Ex. Nova" required>
         </div>
-    </div>
+        <button class="btn login-btn" type="submit">Entrer</button>
+        <p id="loginError" class="error" aria-live="polite"></p>
+      </form>
+    </section>
 
-    <!-- ======== HUB PAGE ======== -->
-    <div id="hub-page" class="page hidden">
-        <nav class="hub-navbar">
-            <div class="logo">
-                <span class="gradient-text">Z</span>orii
-            </div>
-            <div class="user-display">
-                <span class="online-dot"></span>
-                <span id="hub-username"></span>
-            </div>
-            <button id="logout-btn" class="btn" style="padding: 8px 16px;">Déconnexion</button>
-        </nav>
-        <main class="container">
-            <div class="hub-section">
-                <h2>Créer une Room</h2>
-                <form id="create-room-form" class="create-room-form">
-                    <input type="text" id="new-room-name" class="input-field" placeholder="Nom de la nouvelle room..." required>
-                    <button type="submit" class="btn">Créer</button>
-                </form>
-            </div>
+    <section id="hubScreen" class="screen" aria-label="Hub Zorii">
+      <nav class="topbar">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">Z</div>
+          <div class="brand-name">Zorii</div>
+        </div>
+        <div class="nav-actions">
+          <div class="user-pill"><span class="online-dot" aria-hidden="true"></span><span id="currentUser"></span></div>
+          <button id="logoutBtn" class="btn secondary" type="button">Déconnexion</button>
+        </div>
+      </nav>
 
-            <div class="hub-section">
-                <h2>Mes Communautés</h2>
-                <div id="my-rooms-list" class="room-list-container">
-                    <!-- Joined rooms will be injected by JS -->
-                </div>
+      <div class="layout">
+        <section class="hub-hero">
+          <div class="panel glass">
+            <div class="title-row">
+              <h2>Rooms actives</h2>
             </div>
+            <p>Choisis une room pour rejoindre la discussion ou lance une nouvelle conversation avec ton propre salon.</p>
+            <div class="stat-grid">
+              <div class="stat"><strong id="roomCount">0</strong><span>rooms</span></div>
+              <div class="stat"><strong id="memberCount">0</strong><span>membres</span></div>
+              <div class="stat"><strong id="messageCount">0</strong><span>messages</span></div>
+            </div>
+          </div>
 
-            <div class="hub-section">
-                <h2>Découvrir</h2>
-                <form id="search-rooms-form">
-                    <input type="search" id="search-rooms-input" class="input-field" placeholder="Rechercher une room...">
-                </form>
-                <div id="search-results-list" class="room-list-container">
-                     <!-- Search results will be injected by JS -->
-                </div>
+          <form id="createRoomForm" class="panel glass create-room">
+            <h3>Créer une room</h3>
+            <div class="field">
+              <label for="roomNameInput">Nom</label>
+              <input id="roomNameInput" type="text" minlength="2" maxlength="28" placeholder="Ex. Design nocturne">
             </div>
-        </main>
-    </div>
+            <button class="btn" type="submit">Créer</button>
+            <p id="roomError" class="error" aria-live="polite"></p>
+          </form>
+        </section>
 
-    <!-- ======== ROOM PAGE ======== -->
-    <div id="room-page" class="page hidden">
-        <header class="room-header">
-            <button class="back-btn" id="back-to-hub-btn">&larr;</button>
-            <div>
-                <h2 id="room-name-header"></h2>
-            </div>
-            <button id="members-btn" class="btn members-btn">Membres</button>
+        <section id="roomsList" class="room-grid" aria-live="polite"></section>
+      </div>
+    </section>
+
+    <section id="roomScreen" class="screen room-screen" aria-label="Room de discussion">
+      <nav class="topbar">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">Z</div>
+          <div class="brand-name">Zorii</div>
+        </div>
+        <div class="nav-actions">
+          <button id="backBtn" class="btn secondary" type="button">Hub</button>
+          <button id="logoutBtnRoom" class="btn secondary" type="button">Déconnexion</button>
+        </div>
+      </nav>
+
+      <section class="chat-shell glass">
+        <header class="chat-header">
+          <div class="room-meta">
+            <h2 id="roomTitle"></h2>
+            <span id="roomMembers"></span>
+          </div>
+          <div id="avatarRow" class="avatar-row" aria-label="Membres actifs"></div>
         </header>
 
-        <main id="messages-container">
-            <!-- Messages will be injected by JS -->
-        </main>
+        <div id="messagesList" class="messages"></div>
 
-        <div id="members-panel" class="glass-card">
-            <h3>Membres</h3>
-            <ul id="member-list">
-                <!-- Member list will be injected by JS -->
-            </ul>
-        </div>
+        <form id="messageForm" class="composer">
+          <input id="messageInput" type="text" maxlength="240" placeholder="Écrire un message..." autocomplete="off">
+          <button class="btn" type="submit">Envoyer</button>
+        </form>
+      </section>
+    </section>
+  </main>
 
-        <footer class="message-form-container">
-            <form id="message-form">
-                <input type="text" id="message-input" class="input-field" placeholder="Écrivez votre message..." autocomplete="off">
-                <button type="submit" class="btn">Envoyer</button>
-            </form>
-        </footer>
-    </div>
+  <script>
+    const storageKey = "zorii-state-v1";
+    const people = ["Mira", "Sacha", "Eli", "Noor", "Lio", "Iris", "Kyan", "Ava"];
+    const palette = ["#7c3aed", "#3b82f6", "#a78bfa", "#2563eb", "#8b5cf6", "#06b6d4"];
 
+    const seedRooms = [
+      {
+        id: crypto.randomUUID(),
+        name: "Lounge Violet",
+        members: 18,
+        messages: [
+          { author: "Mira", text: "Bienvenue dans le salon principal.", mine: false },
+          { author: "Sacha", text: "Quelqu'un teste déjà la nouvelle interface ?", mine: false }
+        ]
+      },
+      {
+        id: crypto.randomUUID(),
+        name: "Créateurs",
+        members: 11,
+        messages: [
+          { author: "Noor", text: "Je partage des idées de visuels ce soir.", mine: false },
+          { author: "Eli", text: "Le dégradé violet bleu fonctionne super bien.", mine: false }
+        ]
+      },
+      {
+        id: crypto.randomUUID(),
+        name: "Tech & Café",
+        members: 24,
+        messages: [
+          { author: "Lio", text: "Vanilla JS, propre et rapide.", mine: false },
+          { author: "Iris", text: "Je veux voir les animations de hover.", mine: false }
+        ]
+      },
+      {
+        id: crypto.randomUUID(),
+        name: "After Dark",
+        members: 9,
+        messages: [
+          { author: "Kyan", text: "Ambiance nocturne activée.", mine: false }
+        ]
+      }
+    ];
 
-    <script type="module">
-        // ================= FIREBASE SDKS =================
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-        import { 
-            getAuth, 
-            createUserWithEmailAndPassword, 
-            signInWithEmailAndPassword, 
-            onAuthStateChanged, 
-            signOut, 
-            updateProfile 
-        } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
-        import { 
-            getFirestore, 
-            collection, 
-            addDoc, 
-            onSnapshot, 
-            orderBy, 
-            query, 
-            serverTimestamp,
-            doc,
-            setDoc,
-            getDoc,
-            getDocs,
-            updateDoc,
-            arrayUnion,
-            where,
-            documentId
-        } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+    const state = loadState();
+    let activeRoomId = null;
 
-        // ================= FIREBASE CONFIG =================
-        const firebaseConfig = {
-            apiKey: "AIzaSyDaWhU68yjghUgm8HBlbs9Ngj3ii46jthE",
-            authDomain: "zorii-c1a38.firebaseapp.com",
-            projectId: "zorii-c1a38",
-            storageBucket: "zorii-c1a38.firebasestorage.app",
-            messagingSenderId: "576444699642",
-            appId: "1:576444699642:web:1fcf66eb88a06e181d8a43",
-            measurementId: "G-C2M2LJRZTG"
-        };
+    const loginScreen = document.querySelector("#loginScreen");
+    const hubScreen = document.querySelector("#hubScreen");
+    const roomScreen = document.querySelector("#roomScreen");
+    const loginForm = document.querySelector("#loginForm");
+    const usernameInput = document.querySelector("#usernameInput");
+    const loginError = document.querySelector("#loginError");
+    const currentUser = document.querySelector("#currentUser");
+    const logoutBtn = document.querySelector("#logoutBtn");
+    const logoutBtnRoom = document.querySelector("#logoutBtnRoom");
+    const createRoomForm = document.querySelector("#createRoomForm");
+    const roomNameInput = document.querySelector("#roomNameInput");
+    const roomError = document.querySelector("#roomError");
+    const roomsList = document.querySelector("#roomsList");
+    const roomCount = document.querySelector("#roomCount");
+    const memberCount = document.querySelector("#memberCount");
+    const messageCount = document.querySelector("#messageCount");
+    const backBtn = document.querySelector("#backBtn");
+    const roomTitle = document.querySelector("#roomTitle");
+    const roomMembers = document.querySelector("#roomMembers");
+    const avatarRow = document.querySelector("#avatarRow");
+    const messagesList = document.querySelector("#messagesList");
+    const messageForm = document.querySelector("#messageForm");
+    const messageInput = document.querySelector("#messageInput");
 
-        // ================= INITIALIZATION =================
-        const app = initializeApp(firebaseConfig);
-        const auth = getAuth(app);
-        const db = getFirestore(app);
+    function loadState() {
+      try {
+        const stored = JSON.parse(localStorage.getItem(storageKey));
+        if (stored && Array.isArray(stored.rooms)) {
+          return stored;
+        }
+      } catch (error) {
+        localStorage.removeItem(storageKey);
+      }
 
-        // ================= STATE =================
-        let currentUser = null;
-        let currentRoomData = null;
-        let myRoomsUnsubscribe = () => {};
-        let roomDataUnsubscribe = () => {};
-        let messagesUnsubscribe = () => {};
+      return {
+        username: "",
+        rooms: seedRooms
+      };
+    }
 
-        // ================= DOM ELEMENTS =================
-        const pages = {
-            login: document.getElementById('login-page'),
-            hub: document.getElementById('hub-page'),
-            room: document.getElementById('room-page'),
-        };
+    function saveState() {
+      localStorage.setItem(storageKey, JSON.stringify(state));
+    }
 
-        const loginForm = document.getElementById('login-form');
-        const signupForm = document.getElementById('signup-form');
-        const showSignupBtn = document.getElementById('show-signup');
-        const showLoginBtn = document.getElementById('show-login');
-        const hubUsername = document.getElementById('hub-username');
-        const logoutBtn = document.getElementById('logout-btn');
-        const createRoomForm = document.getElementById('create-room-form');
-        const newRoomNameInput = document.getElementById('new-room-name');
-        const myRoomsList = document.getElementById('my-rooms-list');
-        const searchRoomsForm = document.getElementById('search-rooms-form');
-        const searchRoomsInput = document.getElementById('search-rooms-input');
-        const searchResultsList = document.getElementById('search-results-list');
-        const backToHubBtn = document.getElementById('back-to-hub-btn');
-        const roomNameHeader = document.getElementById('room-name-header');
-        const membersBtn = document.getElementById('members-btn');
-        const membersPanel = document.getElementById('members-panel');
-        const memberList = document.getElementById('member-list');
-        const messagesContainer = document.getElementById('messages-container');
-        const messageForm = document.getElementById('message-form');
-        const messageInput = document.getElementById('message-input');
+    function showScreen(screen) {
+      [loginScreen, hubScreen, roomScreen].forEach((item) => item.classList.remove("active"));
+      screen.classList.add("active");
+    }
 
+    function setUser(username) {
+      state.username = username.trim();
+      saveState();
+      currentUser.textContent = state.username;
+    }
 
-        // ================= FUNCTIONS =================
+    function logout() {
+      state.username = "";
+      activeRoomId = null;
+      saveState();
+      usernameInput.value = "";
+      showScreen(loginScreen);
+      usernameInput.focus();
+    }
 
-        const showPage = (pageName) => {
-            Object.values(pages).forEach(page => page.classList.add('hidden'));
-            if (pages[pageName]) pages[pageName].classList.remove('hidden');
-        };
+    function getRoom(id) {
+      return state.rooms.find((room) => room.id === id);
+    }
 
-        // --- Auth & User Profile ---
-        const handleSignUp = async (e) => {
-            e.preventDefault();
-            const name = signupForm['signup-name'].value.trim();
-            const email = signupForm['signup-email'].value.trim();
-            const password = signupForm['signup-password'].value;
+    function roomPreview(room) {
+      const last = room.messages.at(-1);
+      return last ? `${last.author}: ${last.text}` : "Aucun message pour le moment.";
+    }
 
-            if (name.length < 2 || password.length < 6) {
-                alert("Le nom d'utilisateur doit faire au moins 2 caractères et le mot de passe au moins 6.");
-                return;
-            }
-            try {
-                const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-                await updateProfile(userCredential.user, { displayName: name });
-                await setDoc(doc(db, "users", userCredential.user.uid), {
-                    displayName: name,
-                    email: email,
-                    joinedRooms: []
-                });
-            } catch (error) {
-                alert(`Erreur d'inscription: ${error.message}`);
-            }
-        };
+    function renderHub() {
+      currentUser.textContent = state.username;
+      roomCount.textContent = state.rooms.length;
+      memberCount.textContent = state.rooms.reduce((sum, room) => sum + room.members, 0);
+      messageCount.textContent = state.rooms.reduce((sum, room) => sum + room.messages.length, 0);
+      roomsList.innerHTML = "";
 
-        const handleLogin = (e) => {
-            e.preventDefault();
-            const email = loginForm['login-email'].value;
-            const password = loginForm['login-password'].value;
-            signInWithEmailAndPassword(auth, email, password).catch(error => alert(`Erreur de connexion: ${error.message}`));
-        };
+      if (!state.rooms.length) {
+        roomsList.innerHTML = '<div class="empty-state glass">Aucune room active.</div>';
+        return;
+      }
 
-        const handleLogout = () => signOut(auth);
+      state.rooms.forEach((room) => {
+        const card = document.createElement("article");
+        card.className = "room-card";
+        card.innerHTML = `
+          <div class="room-main">
+            <h3>${escapeHTML(room.name)}</h3>
+            <span class="members">${room.members} membres</span>
+          </div>
+          <p class="preview">${escapeHTML(roomPreview(room))}</p>
+          <button class="btn" type="button">Rejoindre</button>
+        `;
+        card.querySelector("button").addEventListener("click", () => openRoom(room.id));
+        roomsList.appendChild(card);
+      });
+    }
 
-        // --- Room Management ---
-        const renderRoomCard = (room, container, isJoined) => {
-            const card = document.createElement('div');
-            card.className = 'room-card glass-card';
-            const buttonHtml = isJoined 
-                ? `<button class="btn open-room-btn" data-room-id="${room.id}" data-room-name="${room.name}">Ouvrir</button>`
-                : `<button class="btn join-room-btn" data-room-id="${room.id}">Rejoindre</button>`;
-            card.innerHTML = `<h3>${room.name}</h3><p class="last-message">${isJoined ? 'Vous êtes membre' : 'Découvrir'}</p>${buttonHtml}`;
-            container.appendChild(card);
-        };
-        
-        const listenForMyRooms = (user) => {
-            myRoomsUnsubscribe();
-            myRoomsUnsubscribe = onSnapshot(doc(db, "users", user.uid), async (userDoc) => {
-                myRoomsList.innerHTML = '<p>Vous n\'avez rejoint aucune communauté.</p>';
-                const userData = userDoc.data();
-                if (userData?.joinedRooms?.length > 0) {
-                    myRoomsList.innerHTML = '';
-                    const roomsQuery = query(collection(db, "rooms"), where(documentId(), "in", userData.joinedRooms));
-                    const querySnapshot = await getDocs(roomsQuery);
-                    querySnapshot.forEach((roomDoc) => {
-                        renderRoomCard({ id: roomDoc.id, ...roomDoc.data() }, myRoomsList, true);
-                    });
-                }
-            });
-        };
+    function openRoom(roomId) {
+      activeRoomId = roomId;
+      renderRoom();
+      showScreen(roomScreen);
+      setTimeout(() => messageInput.focus(), 50);
+    }
 
-        const handleSearchRooms = async (e) => {
-            e.preventDefault();
-            const searchTerm = searchRoomsInput.value.trim();
-            searchResultsList.innerHTML = '';
-            if (searchTerm.length < 2) return;
+    function renderRoom() {
+      const room = getRoom(activeRoomId);
+      if (!room) {
+        showScreen(hubScreen);
+        return;
+      }
 
-            const userDoc = await getDoc(doc(db, "users", currentUser.uid));
-            const myRoomIds = userDoc.data()?.joinedRooms || [];
-            
-            const q = query(collection(db, "rooms"), where('name', '>=', searchTerm), where('name', '<=', searchTerm + '\uf8ff'));
-            const querySnapshot = await getDocs(q);
-            
-            let resultCount = 0;
-            querySnapshot.forEach((roomDoc) => {
-                if (!myRoomIds.includes(roomDoc.id)) {
-                    renderRoomCard({ id: roomDoc.id, ...roomDoc.data() }, searchResultsList, false);
-                    resultCount++;
-                }
-            });
-            if (resultCount === 0) searchResultsList.innerHTML = '<p>Aucune nouvelle room trouvée.</p>';
-        };
+      roomTitle.textContent = room.name;
+      roomMembers.textContent = `${room.members} membres connectés`;
+      avatarRow.innerHTML = "";
+      people.slice(0, 5).forEach((name, index) => {
+        const avatar = document.createElement("div");
+        avatar.className = "avatar";
+        avatar.style.background = `linear-gradient(135deg, ${palette[index]}, ${palette[(index + 2) % palette.length]})`;
+        avatar.textContent = name[0];
+        avatar.title = name;
+        avatarRow.appendChild(avatar);
+      });
 
-        const addUserToRoom = async (roomId) => {
-            if (!currentUser) return;
-            const userDocRef = doc(db, "users", currentUser.uid);
-            await updateDoc(userDocRef, { joinedRooms: arrayUnion(roomId) });
-
-            const roomDocRef = doc(db, "rooms", roomId);
-            await updateDoc(roomDocRef, {
-                members: arrayUnion({ uid: currentUser.uid, displayName: currentUser.displayName })
-            });
-        };
-
-        const handleCreateRoom = async (e) => {
-            e.preventDefault();
-            const roomName = newRoomNameInput.value.trim();
-            if (!roomName || !currentUser) return;
-
-            try {
-                const newRoomRef = await addDoc(collection(db, 'rooms'), {
-                    name: roomName,
-                    creatorId: currentUser.uid,
-                    createdAt: serverTimestamp(),
-                    members: [{ uid: currentUser.uid, displayName: currentUser.displayName }]
-                });
-                newRoomNameInput.value = '';
-                await updateDoc(doc(db, "users", currentUser.uid), { joinedRooms: arrayUnion(newRoomRef.id) });
-                navigateToRoom(newRoomRef.id);
-            } catch (error) {
-                alert(`Erreur de création de room: ${error.message}`);
-            }
-        };
-
-        const renderMemberList = (members = [], creatorId = '') => {
-            memberList.innerHTML = '';
-            membersBtn.textContent = `Membres (${members.length})`;
-            members.forEach(member => {
-                const li = document.createElement('li');
-                li.textContent = member.displayName;
-                li.className = 'member-item';
-                if (member.uid === creatorId) {
-                    li.classList.add('creator-member');
-                    li.textContent += ' (Créateur)';
-                }
-                memberList.appendChild(li);
-            });
-        };
-
-        const navigateToRoom = (roomId) => {
-            roomDataUnsubscribe();
-            roomDataUnsubscribe = onSnapshot(doc(db, 'rooms', roomId), (roomDoc) => {
-                if (!roomDoc.exists()) {
-                    showPage('hub');
-                    return;
-                }
-                currentRoomData = { id: roomDoc.id, ...roomDoc.data() };
-                roomNameHeader.textContent = currentRoomData.name;
-                renderMemberList(currentRoomData.members, currentRoomData.creatorId);
-                listenForMessages(roomId);
-            });
-            showPage('room');
-        };
-
-        const listenForMessages = (roomId) => {
-            messagesUnsubscribe();
-            const messagesQuery = query(collection(db, 'rooms', roomId, 'messages'), orderBy('timestamp', 'asc'));
-            messagesUnsubscribe = onSnapshot(messagesQuery, snapshot => {
-                messagesContainer.innerHTML = '';
-                snapshot.forEach(doc => {
-                    appendMessage(doc.data());
-                });
-                messagesContainer.scrollTop = messagesContainer.scrollHeight;
-            });
-        };
-
-        const appendMessage = (msg) => {
-            const messageEl = document.createElement('div');
-            const isSent = msg.userId === currentUser.uid;
-            messageEl.className = `message ${isSent ? 'sent' : 'received'}`;
-            if (msg.userId === currentRoomData?.creatorId) {
-                messageEl.classList.add('creator-message');
-            }
-            messageEl.innerHTML = `
-                <div class="message-bubble">
-                    ${!isSent ? `<div class="message-sender">${msg.userName}</div>` : ''}
-                    <div class="message-text">${msg.text}</div>
-                </div>`;
-            messagesContainer.appendChild(messageEl);
-        };
-
-        const handleSendMessage = async (e) => {
-            e.preventDefault();
-            const text = messageInput.value.trim();
-            if (!text || !currentRoomData?.id || !currentUser) return;
-            
-            try {
-                await addDoc(collection(db, 'rooms', currentRoomData.id, 'messages'), {
-                    text,
-                    userId: currentUser.uid,
-                    userName: currentUser.displayName,
-                    timestamp: serverTimestamp()
-                });
-                messageInput.value = '';
-            } catch (error) {
-                alert(`Erreur d'envoi: ${error.message}`);
-            }
-        };
-
-        // --- Auth State Observer ---
-        onAuthStateChanged(auth, user => {
-            myRoomsUnsubscribe();
-            messagesUnsubscribe();
-            roomDataUnsubscribe();
-            if (user) {
-                currentUser = user;
-                hubUsername.textContent = user.displayName || user.email;
-                listenForMyRooms(user);
-                showPage('hub');
-            } else {
-                currentUser = null;
-                showPage('login');
-            }
+      messagesList.innerHTML = "";
+      if (!room.messages.length) {
+        messagesList.innerHTML = '<div class="empty-state">La room attend son premier message.</div>';
+      } else {
+        room.messages.forEach((message) => {
+          const item = document.createElement("div");
+          item.className = `message ${message.mine ? "mine" : "theirs"}`;
+          item.innerHTML = `
+            <span class="author">${escapeHTML(message.author)}</span>
+            <div class="bubble">${escapeHTML(message.text)}</div>
+          `;
+          messagesList.appendChild(item);
         });
+      }
 
-        // ================= EVENT LISTENERS =================
-        loginForm.addEventListener('submit', handleLogin);
-        signupForm.addEventListener('submit', handleSignUp);
-        showSignupBtn.addEventListener('click', (e) => { e.preventDefault(); loginForm.classList.add('hidden'); signupForm.classList.remove('hidden'); });
-        showLoginBtn.addEventListener('click', (e) => { e.preventDefault(); signupForm.classList.add('hidden'); loginForm.classList.remove('hidden'); });
-        logoutBtn.addEventListener('click', handleLogout);
+      requestAnimationFrame(() => {
+        messagesList.scrollTop = messagesList.scrollHeight;
+      });
+    }
 
-        createRoomForm.addEventListener('submit', handleCreateRoom);
-        searchRoomsForm.addEventListener('submit', handleSearchRooms);
-        
-        myRoomsList.addEventListener('click', (e) => {
-            const openBtn = e.target.closest('.open-room-btn');
-            if (openBtn) navigateToRoom(openBtn.dataset.roomId);
-        });
+    function addMessage(text) {
+      const room = getRoom(activeRoomId);
+      if (!room) return;
 
-        searchResultsList.addEventListener('click', (e) => {
-            const joinBtn = e.target.closest('.join-room-btn');
-            if (joinBtn) {
-                addUserToRoom(joinBtn.dataset.roomId);
-                joinBtn.textContent = 'Rejoint !';
-                joinBtn.disabled = true;
-            }
-        });
-        
-        backToHubBtn.addEventListener('click', () => {
-            messagesUnsubscribe();
-            roomDataUnsubscribe();
-            currentRoomData = null;
-            showPage('hub');
-        });
+      room.messages.push({
+        author: state.username,
+        text,
+        mine: true
+      });
+      saveState();
+      renderRoom();
+      renderHub();
+      scheduleReply(room);
+    }
 
-        membersBtn.addEventListener('click', () => membersPanel.classList.toggle('open'));
-        messageForm.addEventListener('submit', handleSendMessage);
-    </script>
+    function scheduleReply(room) {
+      const replies = [
+        "Carrément, je te suis.",
+        "Bonne idée pour cette room.",
+        "Je viens de voir ton message.",
+        "Ça donne une vraie ambiance Zorii.",
+        "On continue ici ?"
+      ];
+      const author = people[Math.floor(Math.random() * people.length)];
+      const text = replies[Math.floor(Math.random() * replies.length)];
 
+      window.setTimeout(() => {
+        const current = getRoom(room.id);
+        if (!current) return;
+        current.messages.push({ author, text, mine: false });
+        saveState();
+        renderHub();
+        if (activeRoomId === current.id && roomScreen.classList.contains("active")) {
+          renderRoom();
+        }
+      }, 900 + Math.random() * 900);
+    }
+
+    function escapeHTML(value) {
+      return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    loginForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const username = usernameInput.value.trim();
+
+      if (username.length < 2) {
+        loginError.textContent = "Le pseudo doit contenir au moins 2 caractères.";
+        return;
+      }
+
+      loginError.textContent = "";
+      setUser(username);
+      renderHub();
+      showScreen(hubScreen);
+    });
+
+    createRoomForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const roomName = roomNameInput.value.trim();
+
+      if (roomName.length < 2) {
+        roomError.textContent = "Choisis un nom de room plus lisible.";
+        return;
+      }
+
+      const newRoom = {
+        id: crypto.randomUUID(),
+        name: roomName,
+        members: Math.floor(5 + Math.random() * 18),
+        messages: [
+          { author: "Zorii", text: `La room ${roomName} vient d'ouvrir.`, mine: false }
+        ]
+      };
+
+      state.rooms.unshift(newRoom);
+      roomNameInput.value = "";
+      roomError.textContent = "";
+      saveState();
+      renderHub();
+      openRoom(newRoom.id);
+    });
+
+    messageForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const text = messageInput.value.trim();
+      if (!text) return;
+      messageInput.value = "";
+      addMessage(text);
+    });
+
+    backBtn.addEventListener("click", () => {
+      activeRoomId = null;
+      renderHub();
+      showScreen(hubScreen);
+    });
+
+    logoutBtn.addEventListener("click", logout);
+    logoutBtnRoom.addEventListener("click", logout);
+
+    if (state.username) {
+      renderHub();
+      showScreen(hubScreen);
+    } else {
+      usernameInput.focus();
+    }
+  </script>
 </body>
 </html>
