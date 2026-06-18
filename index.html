@@ -248,41 +248,19 @@
             flex-shrink: 0; /* Prevent button from shrinking */
         }
         
-        #room-list {
+        .hub-section {
+            margin-top: 2rem;
+        }
+
+        .room-list-container {
+            margin-top: 1rem;
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
             gap: 1.5rem;
         }
 
-        .room-card {
-            padding: 1.5rem;
-            display: flex;
-            flex-direction: column;
-            gap: 1rem;
-            transition: transform 0.2s ease, border-color 0.2s ease;
-        }
-        
-        .room-card:hover {
-            transform: translateY(-5px);
-            border-color: var(--violet-light);
-        }
-        
-        .room-card h3 {
-            font-size: 1.25rem;
-            font-weight: 600;
-        }
-        
-        .room-meta {
-            color: var(--text-muted);
-            font-size: 0.9rem;
-        }
-        
-        .last-message {
-            font-style: italic;
-            color: var(--text-muted);
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
+        #search-rooms-form {
+            margin-top: 1rem;
         }
 
         /* --- Room Page --- */
@@ -388,7 +366,7 @@
             .login-card h1 {
                 font-size: 2rem; /* Smaller font for title */
             }
-            #room-list {
+            .room-list-container {
                 grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); /* Allow smaller cards */
             }
         }
@@ -403,7 +381,7 @@
             .hub-navbar .logo, .user-display {
                 font-size: 1.2rem; /* Smaller text for navbar */
             }
-            #room-list {
+            .room-list-container {
                 grid-template-columns: 1fr; /* Single column on very small screens */
             }
             .create-room-form {
@@ -469,15 +447,29 @@
             <button id="logout-btn" class="btn" style="padding: 8px 16px;">Déconnexion</button>
         </nav>
         <main class="container">
-            <h2>Créer une Room</h2>
-            <form id="create-room-form" class="create-room-form">
-                <input type="text" id="new-room-name" class="input-field" placeholder="Nom de la nouvelle room..." required>
-                <button type="submit" class="btn">Créer</button>
-            </form>
+            <div class="hub-section">
+                <h2>Créer une Room</h2>
+                <form id="create-room-form" class="create-room-form">
+                    <input type="text" id="new-room-name" class="input-field" placeholder="Nom de la nouvelle room..." required>
+                    <button type="submit" class="btn">Créer</button>
+                </form>
+            </div>
 
-            <h2>Rooms Disponibles</h2>
-            <div id="room-list">
-                <!-- Room cards will be injected by JS -->
+            <div class="hub-section">
+                <h2>Mes Communautés</h2>
+                <div id="my-rooms-list" class="room-list-container">
+                    <!-- Joined rooms will be injected by JS -->
+                </div>
+            </div>
+
+            <div class="hub-section">
+                <h2>Découvrir</h2>
+                <form id="search-rooms-form">
+                    <input type="search" id="search-rooms-input" class="input-field" placeholder="Rechercher une room...">
+                </form>
+                <div id="search-results-list" class="room-list-container">
+                     <!-- Search results will be injected by JS -->
+                </div>
             </div>
         </main>
     </div>
@@ -527,7 +519,14 @@
             orderBy, 
             query, 
             serverTimestamp,
-            getDocs
+            doc,
+            setDoc,
+            getDoc,
+            getDocs,
+            updateDoc,
+            arrayUnion,
+            where,
+            documentId
         } from "https://www.gstatic.com/firebasejs/9.22.1/firebase-firestore.js";
 
         // ================= FIREBASE CONFIG =================
@@ -549,9 +548,8 @@
         // ================= STATE =================
         let currentUser = null;
         let currentRoomId = null;
-        let unsubscribeRooms = () => {};
-        let unsubscribeMessages = () => {};
-        const avatarColors = ['#f87171', '#fb923c', '#fbbf24', '#a3e635', '#4ade80', '#34d399', '#2dd4bf', '#60a5fa', '#a78bfa', '#f472b6'];
+        let myRoomsUnsubscribe = () => {};
+        let messagesUnsubscribe = () => {};
 
         // ================= DOM ELEMENTS =================
         const pages = {
@@ -560,24 +558,23 @@
             room: document.getElementById('room-page'),
         };
 
-        // Auth Forms
         const loginForm = document.getElementById('login-form');
         const signupForm = document.getElementById('signup-form');
         const showSignupBtn = document.getElementById('show-signup');
         const showLoginBtn = document.getElementById('show-login');
 
-        // Hub Page
         const hubUsername = document.getElementById('hub-username');
         const logoutBtn = document.getElementById('logout-btn');
-        const roomList = document.getElementById('room-list');
         const createRoomForm = document.getElementById('create-room-form');
         const newRoomNameInput = document.getElementById('new-room-name');
+        
+        const myRoomsList = document.getElementById('my-rooms-list');
+        const searchRoomsForm = document.getElementById('search-rooms-form');
+        const searchRoomsInput = document.getElementById('search-rooms-input');
+        const searchResultsList = document.getElementById('search-results-list');
 
-        // Room Page
         const backToHubBtn = document.getElementById('back-to-hub-btn');
         const roomNameHeader = document.getElementById('room-name-header');
-        const roomMembersHeader = document.getElementById('room-members-header');
-        const roomAvatars = document.getElementById('room-avatars');
         const messagesContainer = document.getElementById('messages-container');
         const messageForm = document.getElementById('message-form');
         const messageInput = document.getElementById('message-input');
@@ -587,140 +584,171 @@
 
         const showPage = (pageName) => {
             Object.values(pages).forEach(page => page.classList.add('hidden'));
-            pages[pageName].classList.remove('hidden');
+            if (pages[pageName]) pages[pageName].classList.remove('hidden');
         };
-        
-        // --- Auth Functions ---
+
+        // --- Auth & User Profile ---
         const handleSignUp = async (e) => {
             e.preventDefault();
-            const name = signupForm['signup-name'].value;
-            const email = signupForm['signup-email'].value;
+            const name = signupForm['signup-name'].value.trim();
+            const email = signupForm['signup-email'].value.trim();
             const password = signupForm['signup-password'].value;
 
             if (name.length < 2 || password.length < 6) {
-                alert("Le nom d'utilisateur doit faire au moins 2 caractères et le mot de passe 6.");
+                alert("Le nom d'utilisateur doit faire au moins 2 caractères et le mot de passe au moins 6.");
                 return;
             }
 
             try {
                 const userCredential = await createUserWithEmailAndPassword(auth, email, password);
                 await updateProfile(userCredential.user, { displayName: name });
-                // Auth state observer will handle the rest
+                // Create a document for the user in the 'users' collection
+                await setDoc(doc(db, "users", userCredential.user.uid), {
+                    displayName: name,
+                    email: email,
+                    joinedRooms: []
+                });
             } catch (error) {
                 alert(`Erreur d'inscription: ${error.message}`);
             }
         };
 
-        const handleLogin = async (e) => {
+        const handleLogin = (e) => {
             e.preventDefault();
             const email = loginForm['login-email'].value;
             const password = loginForm['login-password'].value;
-            try {
-                await signInWithEmailAndPassword(auth, email, password);
-                // Auth state observer will handle the rest
-            } catch (error) {
-                alert(`Erreur de connexion: ${error.message}`);
+            signInWithEmailAndPassword(auth, email, password).catch(error => alert(`Erreur de connexion: ${error.message}`));
+        };
+
+        const handleLogout = () => signOut(auth);
+
+        // --- Room Management ---
+        const renderRoomCard = (room, container, isJoined) => {
+            const card = document.createElement('div');
+            card.className = 'room-card glass-card';
+            const buttonHtml = isJoined 
+                ? `<button class="btn open-room-btn" data-room-id="${room.id}">Ouvrir</button>`
+                : `<button class="btn join-room-btn" data-room-id="${room.id}">Rejoindre</button>`;
+
+            card.innerHTML = `
+                <h3>${room.name}</h3>
+                <p class="last-message">${isJoined ? 'Vous êtes membre' : 'Découvrir'}</p>
+                ${buttonHtml}
+            `;
+            container.appendChild(card);
+        };
+
+        const listenForMyRooms = (user) => {
+            myRoomsUnsubscribe(); // Unsubscribe from previous listener
+            myRoomsUnsubscribe = onSnapshot(doc(db, "users", user.uid), async (userDoc) => {
+                myRoomsList.innerHTML = '<p>Vous n\'avez rejoint aucune communauté.</p>';
+                const userData = userDoc.data();
+                if (userData && userData.joinedRooms && userData.joinedRooms.length > 0) {
+                    myRoomsList.innerHTML = '';
+                    const roomIds = userData.joinedRooms;
+                    // Fetch details for each room. Firestore 'in' query is limited to 10 items.
+                    // For more, you'd fetch them individually.
+                    const roomsQuery = query(collection(db, "rooms"), where(documentId(), "in", roomIds));
+                    const querySnapshot = await getDocs(roomsQuery);
+                    querySnapshot.forEach((roomDoc) => {
+                        renderRoomCard({ id: roomDoc.id, ...roomDoc.data() }, myRoomsList, true);
+                    });
+                }
+            });
+        };
+
+        const handleSearchRooms = async (e) => {
+            e.preventDefault();
+            const searchTerm = searchRoomsInput.value.trim().toLowerCase();
+            searchResultsList.innerHTML = '';
+            if (searchTerm.length < 2) return;
+
+            const userDoc = await getDoc(doc(db, "users", currentUser.uid));
+            const myRoomIds = userDoc.data()?.joinedRooms || [];
+
+            // A simple search. For real full-text search, use a third-party service like Algolia.
+            const allRoomsQuery = query(collection(db, "rooms"), where('name', '>=', searchTerm), where('name', '<=', searchTerm + '\uf8ff'));
+            const querySnapshot = await getDocs(allRoomsQuery);
+            
+            let resultCount = 0;
+            querySnapshot.forEach((roomDoc) => {
+                // Don't show rooms the user has already joined
+                if (!myRoomIds.includes(roomDoc.id)) {
+                    renderRoomCard({ id: roomDoc.id, ...roomDoc.data() }, searchResultsList, false);
+                    resultCount++;
+                }
+            });
+
+            if(resultCount === 0) {
+                searchResultsList.innerHTML = '<p>Aucune nouvelle room trouvée.</p>';
             }
         };
 
-        const handleLogout = async () => {
-            await signOut(auth);
-        };
-        
-        // --- Firestore Functions ---
-
-        const listenForRooms = () => {
-            const roomsQuery = query(collection(db, 'rooms'), orderBy('name'));
-            unsubscribeRooms = onSnapshot(roomsQuery, snapshot => {
-                roomList.innerHTML = '';
-                snapshot.forEach(async (doc) => {
-                    const room = { id: doc.id, ...doc.data() };
-                    
-                    // In a real app, member count would be stored differently
-                    const card = document.createElement('div');
-                    card.className = 'room-card glass-card';
-                    card.innerHTML = `
-                        <h3>${room.name}</h3>
-                        <p class="last-message">
-                            ${room.lastMessage ? `<strong>${room.lastMessage.user}:</strong> ${room.lastMessage.text}` : 'Aucun message'}
-                        </p>
-                        <button class="btn join-room-btn" data-room-id="${room.id}">Rejoindre</button>
-                    `;
-                    roomList.appendChild(card);
-                });
+        const addUserToRoom = async (roomId) => {
+            if (!currentUser) return;
+            const userDocRef = doc(db, "users", currentUser.uid);
+            await updateDoc(userDocRef, {
+                joinedRooms: arrayUnion(roomId)
             });
         };
-        
+
         const handleCreateRoom = async (e) => {
             e.preventDefault();
             const roomName = newRoomNameInput.value.trim();
             if (!roomName || !currentUser) return;
 
             try {
-                const newRoom = await addDoc(collection(db, 'rooms'), {
+                const newRoomRef = await addDoc(collection(db, 'rooms'), {
                     name: roomName,
                     creatorId: currentUser.uid,
                     createdAt: serverTimestamp()
                 });
                 newRoomNameInput.value = '';
-                handleJoinRoom(newRoom.id);
+                await addUserToRoom(newRoomRef.id);
+                navigateToRoom(newRoomRef.id, roomName);
             } catch (error) {
                 alert(`Erreur de création de room: ${error.message}`);
             }
         };
 
-        const handleJoinRoom = (roomId) => {
+        const navigateToRoom = (roomId, roomName) => {
             currentRoomId = roomId;
+            roomNameHeader.textContent = roomName;
             listenForMessages(roomId);
             showPage('room');
         };
 
         const listenForMessages = (roomId) => {
-            const room = { name: "Chargement..." }; // Placeholder
-            roomNameHeader.textContent = room.name;
-
+            messagesUnsubscribe(); // Unsubscribe from previous room
             const messagesQuery = query(collection(db, 'rooms', roomId, 'messages'), orderBy('timestamp', 'asc'));
-            
-            unsubscribeMessages = onSnapshot(messagesQuery, snapshot => {
+            messagesUnsubscribe = onSnapshot(messagesQuery, snapshot => {
                 messagesContainer.innerHTML = '';
                 snapshot.forEach(doc => {
                     const msg = doc.data();
-                    appendMessage(msg.userName, msg.text);
+                    appendMessage(msg.userName, msg.text, msg.userId);
                 });
                 messagesContainer.scrollTop = messagesContainer.scrollHeight;
             });
-            
-            // This is not efficient, but for this demo we'll fetch room name separately.
-            // A better way is to pass room data into handleJoinRoom.
-            const roomQuery = query(collection(db, 'rooms'));
-            getDocs(roomQuery).then(docs => {
-                const currentDoc = docs.docs.find(d => d.id === roomId);
-                if (currentDoc) {
-                    roomNameHeader.textContent = currentDoc.data().name;
-                }
-            })
         };
-        
-        const appendMessage = (user, text) => {
+
+        const appendMessage = (userName, text, userId) => {
             const messageEl = document.createElement('div');
-            const isSent = user === currentUser.displayName;
+            const isSent = userId === currentUser.uid;
             messageEl.className = `message ${isSent ? 'sent' : 'received'}`;
 
             messageEl.innerHTML = `
                 <div class="message-bubble">
-                    ${!isSent ? `<div class="message-sender">${user}</div>` : ''}
+                    ${!isSent ? `<div class="message-sender">${userName}</div>` : ''}
                     <div class="message-text">${text}</div>
-                </div>
-            `;
+                </div>`;
             messagesContainer.appendChild(messageEl);
-            messagesContainer.scrollTop = messagesContainer.scrollHeight;
         };
 
         const handleSendMessage = async (e) => {
             e.preventDefault();
             const text = messageInput.value.trim();
             if (!text || !currentRoomId || !currentUser) return;
-
+            
             try {
                 await addDoc(collection(db, 'rooms', currentRoomId, 'messages'), {
                     text: text,
@@ -734,59 +762,54 @@
             }
         };
 
-        // ================= AUTH STATE OBSERVER =================
+        // --- Auth State Observer ---
         onAuthStateChanged(auth, user => {
+            myRoomsUnsubscribe();
+            messagesUnsubscribe();
             if (user) {
-                // User is signed in
                 currentUser = user;
-                hubUsername.textContent = user.displayName || 'Utilisateur';
-                listenForRooms();
+                hubUsername.textContent = user.displayName || user.email;
+                listenForMyRooms(user);
                 showPage('hub');
             } else {
-                // User is signed out
                 currentUser = null;
-                if (unsubscribeRooms) unsubscribeRooms();
-                if (unsubscribeMessages) unsubscribeMessages();
                 showPage('login');
             }
         });
 
-
         // ================= EVENT LISTENERS =================
-
-        // Auth
         loginForm.addEventListener('submit', handleLogin);
         signupForm.addEventListener('submit', handleSignUp);
-        showSignupBtn.addEventListener('click', (e) => {
-            e.preventDefault();
-            loginForm.classList.add('hidden');
-            signupForm.classList.remove('hidden');
-        });
-        showLoginBtn.addEventListener('click', (e) => {
-            e.preventDefault();
-            signupForm.classList.add('hidden');
-            loginForm.classList.remove('hidden');
-        });
+        showSignupBtn.addEventListener('click', (e) => { e.preventDefault(); loginForm.classList.add('hidden'); signupForm.classList.remove('hidden'); });
+        showLoginBtn.addEventListener('click', (e) => { e.preventDefault(); signupForm.classList.add('hidden'); loginForm.classList.remove('hidden'); });
         logoutBtn.addEventListener('click', handleLogout);
 
-        // Hub
         createRoomForm.addEventListener('submit', handleCreateRoom);
-        roomList.addEventListener('click', (e) => {
-            const joinButton = e.target.closest('.join-room-btn');
-            if (joinButton) {
-                const roomId = joinButton.dataset.roomId;
-                handleJoinRoom(roomId);
+        searchRoomsForm.addEventListener('submit', handleSearchRooms);
+        
+        myRoomsList.addEventListener('click', (e) => {
+            const openBtn = e.target.closest('.open-room-btn');
+            if (openBtn) {
+                const roomName = openBtn.parentElement.querySelector('h3').textContent;
+                navigateToRoom(openBtn.dataset.roomId, roomName);
             }
         });
 
-        // Room
+        searchResultsList.addEventListener('click', (e) => {
+            const joinBtn = e.target.closest('.join-room-btn');
+            if (joinBtn) {
+                addUserToRoom(joinBtn.dataset.roomId);
+                joinBtn.textContent = 'Rejoint !';
+                joinBtn.disabled = true;
+            }
+        });
+        
         backToHubBtn.addEventListener('click', () => {
-            if (unsubscribeMessages) unsubscribeMessages();
+            messagesUnsubscribe();
             currentRoomId = null;
             showPage('hub');
         });
         messageForm.addEventListener('submit', handleSendMessage);
-        
     </script>
 
 </body>
