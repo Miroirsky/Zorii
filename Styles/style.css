@@ -429,6 +429,13 @@ button {
   text-overflow: ellipsis;
 }
 
+.room-item-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
 .room-item-count {
   font-family: 'JetBrains Mono', monospace;
   font-size: 0.8rem;
@@ -438,6 +445,20 @@ button {
   padding: 5px 10px;
   border-radius: 8px;
   flex-shrink: 0;
+}
+
+.btn-room-join {
+  padding: 6px 14px;
+  border-radius: 8px;
+  background: var(--purple);
+  color: #fff;
+  font-size: 0.8rem;
+  font-weight: 600;
+  transition: background 0.15s ease;
+}
+
+.btn-room-join:hover {
+  background: var(--purple-bright);
 }
 
 .empty-state {

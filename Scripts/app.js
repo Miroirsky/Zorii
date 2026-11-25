@@ -1,15 +1,18 @@
 /**
- * Zorii UI Controller
+ * Zorii V2 UI Controller
+ * - Uses Event Delegation on `#rooms-list` so room clicks never get lost during live list updates.
+ * - Renders authoritative room state (title, host computer badge, connected users, and chat history).
  */
 document.addEventListener('DOMContentLoaded', () => {
   const cfg = window.ZORII_CONFIG;
 
-  // Elements
+  // Topbar
   const topbar = document.getElementById('topbar');
   const navHome = document.getElementById('nav-home');
   const userBadge = document.getElementById('user-badge');
   const currentUsernameEl = document.getElementById('current-username');
 
+  // Views
   const views = {
     auth: document.getElementById('view-auth'),
     menu: document.getElementById('view-menu'),
@@ -18,25 +21,28 @@ document.addEventListener('DOMContentLoaded', () => {
     room: document.getElementById('view-room')
   };
 
-  // Forms & Inputs
+  // Auth
   const formAuth = document.getElementById('form-auth');
   const inputUsername = document.getElementById('input-username');
 
+  // Main Menu
   const btnGoJoin = document.getElementById('btn-go-join');
   const btnGoHost = document.getElementById('btn-go-host');
 
+  // Join / Search
   const inputSearch = document.getElementById('input-search');
   const btnDirectJoin = document.getElementById('btn-direct-join');
   const btnRefreshRooms = document.getElementById('btn-refresh-rooms');
   const roomsListEl = document.getElementById('rooms-list');
 
+  // Host Setup
   const formHost = document.getElementById('form-host');
   const hostNameInput = document.getElementById('host-name');
   const hostDescInput = document.getElementById('host-desc');
   const hostMaxInput = document.getElementById('host-max');
   const hostMaxVal = document.getElementById('host-max-val');
 
-  // Room View Elements
+  // Room / Chat
   const roomTitleEl = document.getElementById('room-title');
   const roomDescEl = document.getElementById('room-desc');
   const roomHostTag = document.getElementById('room-host-tag');
@@ -50,13 +56,15 @@ document.addEventListener('DOMContentLoaded', () => {
   const usersListEl = document.getElementById('users-list');
   const toastEl = document.getElementById('toast');
 
-  let toastTimeout = null;
+  let toastTimer = null;
+  let lastRenderedSignature = '';
+  let renderedMsgCount = 0;
 
   function showToast(text) {
     toastEl.textContent = text;
     toastEl.classList.remove('hidden');
-    clearTimeout(toastTimeout);
-    toastTimeout = setTimeout(() => {
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => {
       toastEl.classList.add('hidden');
     }, 2600);
   }
@@ -68,39 +76,47 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (viewId === 'view-auth') {
       topbar.classList.add('hidden');
-      setTimeout(() => inputUsername.focus(), 50);
+      setTimeout(() => inputUsername.focus(), 40);
     } else {
       topbar.classList.remove('hidden');
     }
 
     if (viewId === 'view-join') {
+      lastRenderedSignature = '';
       p2p.requestDiscovery();
-      renderRoomsList(p2p.getRooms());
-      setTimeout(() => inputSearch.focus(), 50);
+      renderRoomsList(p2p.getRooms(), true);
+      setTimeout(() => inputSearch.focus(), 40);
     } else if (viewId === 'view-host') {
-      setTimeout(() => hostNameInput.focus(), 50);
+      setTimeout(() => hostNameInput.focus(), 40);
     } else if (viewId === 'view-room') {
-      setTimeout(() => inputChat.focus(), 50);
+      setTimeout(() => inputChat.focus(), 40);
     }
   }
 
-  // Initialize P2P Engine
+  // Instantiate Zorii Engine
   const p2p = new window.ZoriiP2P({
-    onRoomsUpdated: (rooms) => {
+    onRoomsChanged: (rooms) => {
       if (views.join.classList.contains('active')) {
-        renderRoomsList(rooms);
+        renderRoomsList(rooms, false);
       }
     },
-    onRoomJoined: (room, isHost) => {
+    onEnterRoom: (room, isHost) => {
+      renderedMsgCount = 0;
+      chatMessagesEl.innerHTML = '';
       roomTitleEl.textContent = room.name;
       roomDescEl.textContent = room.desc || '';
       roomCodeText.textContent = room.id;
       roomHostTag.textContent = isHost ? 'Hosted on your PC' : `Host: ${room.hostName}`;
-      chatMessagesEl.innerHTML = '';
       showView('view-room');
     },
-    onMembersUpdated: (members, max) => {
-      usersCountEl.textContent = `${members.length} / ${max}`;
+    onRoomState: ({ room, isHost, members, messages }) => {
+      roomTitleEl.textContent = room.name;
+      roomDescEl.textContent = room.desc || '';
+      roomCodeText.textContent = room.id;
+      roomHostTag.textContent = isHost ? 'Hosted on your PC' : `Host: ${room.hostName}`;
+
+      // Render connected members list
+      usersCountEl.textContent = `${members.length} / ${room.max}`;
       usersListEl.innerHTML = '';
 
       members.forEach((m) => {
@@ -135,13 +151,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
         usersListEl.appendChild(li);
       });
-    },
-    onMessage: (msg) => {
-      appendMessageEl(msg);
-    },
-    onHistorySync: (history) => {
-      chatMessagesEl.innerHTML = '';
-      history.forEach((m) => appendMessageEl(m));
+
+      // Render messages efficiently
+      if (messages.length < renderedMsgCount) {
+        chatMessagesEl.innerHTML = '';
+        renderedMsgCount = 0;
+      }
+      for (let i = renderedMsgCount; i < messages.length; i++) {
+        appendMessageNode(messages[i]);
+      }
+      renderedMsgCount = messages.length;
     },
     onError: (errText) => {
       showToast(errText);
@@ -149,7 +168,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  function appendMessageEl(msg) {
+  function appendMessageNode(msg) {
     if (msg.type === 'system') {
       const sys = document.createElement('div');
       sys.className = 'msg-system';
@@ -185,8 +204,23 @@ document.addEventListener('DOMContentLoaded', () => {
     chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
   }
 
-  function renderRoomsList(rooms) {
-    const query = inputSearch.value.trim().toLowerCase();
+  // Event Delegation on #rooms-list so clicking a room card or Join button ALWAYS fires immediately
+  function handleRoomListActivate(e) {
+    const card = e.target.closest('[data-room-id]');
+    if (!card) return;
+    e.preventDefault();
+    const roomId = card.getAttribute('data-room-id');
+    if (roomId) {
+      p2p.joinRoom(roomId);
+    }
+  }
+
+  roomsListEl.addEventListener('click', handleRoomListActivate);
+
+  function renderRoomsList(rooms, force) {
+    const rawSearch = inputSearch.value.trim();
+    const query = rawSearch.toLowerCase();
+
     const filtered = rooms.filter(
       (r) =>
         r.name.toLowerCase().includes(query) ||
@@ -195,13 +229,25 @@ document.addEventListener('DOMContentLoaded', () => {
         (r.hostName && r.hostName.toLowerCase().includes(query))
     );
 
-    // Show quick direct-connect button if query looks like a room ID
-    const cleanCode = inputSearch.value.trim().toUpperCase();
-    if (/^[A-Z0-9]{4,8}$/.test(cleanCode)) {
+    const cleanCode = rawSearch.toUpperCase();
+    if (cleanCode.length >= 3 && /^[A-Z0-9-]+$/.test(cleanCode)) {
       btnDirectJoin.classList.remove('hidden');
     } else {
       btnDirectJoin.classList.add('hidden');
     }
+
+    // Compute signature so we NEVER rebuild DOM if nothing visually changed
+    const signature =
+      query +
+      '::' +
+      filtered
+        .map((r) => `${r.id}:${r.name}:${r.desc}:${r.hostName}:${r.count}:${r.max}`)
+        .join('|');
+
+    if (!force && signature === lastRenderedSignature) {
+      return;
+    }
+    lastRenderedSignature = signature;
 
     roomsListEl.innerHTML = '';
 
@@ -209,7 +255,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const empty = document.createElement('div');
       empty.className = 'empty-state';
       empty.textContent = query
-        ? 'No matching rooms — press Enter to connect by Room ID'
+        ? 'No matching rooms — click Connect or press Enter to join by ID'
         : 'No active rooms found';
       roomsListEl.appendChild(empty);
       return;
@@ -218,9 +264,7 @@ document.addEventListener('DOMContentLoaded', () => {
     filtered.forEach((r) => {
       const item = document.createElement('div');
       item.className = 'room-item';
-      item.addEventListener('click', () => {
-        p2p.joinRoom(r.id);
-      });
+      item.setAttribute('data-room-id', r.id);
 
       const info = document.createElement('div');
       info.className = 'room-item-info';
@@ -236,8 +280,13 @@ document.addEventListener('DOMContentLoaded', () => {
       host.className = 'room-item-host';
       host.textContent = r.hostName;
 
+      const codeBadge = document.createElement('span');
+      codeBadge.className = 'room-item-host';
+      codeBadge.textContent = `#${r.id}`;
+
       top.appendChild(name);
       top.appendChild(host);
+      top.appendChild(codeBadge);
       info.appendChild(top);
 
       if (r.desc) {
@@ -247,12 +296,24 @@ document.addEventListener('DOMContentLoaded', () => {
         info.appendChild(desc);
       }
 
+      const rightWrap = document.createElement('div');
+      rightWrap.className = 'room-item-right';
+
       const count = document.createElement('div');
       count.className = 'room-item-count';
       count.textContent = `${r.count} / ${r.max}`;
 
+      const joinBtn = document.createElement('button');
+      joinBtn.type = 'button';
+      joinBtn.className = 'btn-room-join';
+      joinBtn.setAttribute('data-room-id', r.id);
+      joinBtn.textContent = 'Join';
+
+      rightWrap.appendChild(count);
+      rightWrap.appendChild(joinBtn);
+
       item.appendChild(info);
-      item.appendChild(count);
+      item.appendChild(rightWrap);
       roomsListEl.appendChild(item);
     });
   }
@@ -278,18 +339,24 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   userBadge.addEventListener('click', () => {
-    if (p2p.room) {
-      p2p.leaveRoom();
-    }
     inputUsername.value = p2p.username;
     showView('view-auth');
   });
 
   navHome.addEventListener('click', () => {
-    showView('view-menu');
+    if (p2p.activeRoom) {
+      // If user clicks brand logo while in menu, return to active room or menu
+      if (views.room.classList.contains('active')) {
+        showView('view-menu');
+      } else {
+        showView('view-room');
+      }
+    } else {
+      showView('view-menu');
+    }
   });
 
-  // 2. Main Menu Navigation
+  // 2. Main Menu
   btnGoJoin.addEventListener('click', () => showView('view-join'));
   btnGoHost.addEventListener('click', () => showView('view-host'));
 
@@ -299,31 +366,54 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  // 3. Room Browser & Search
+  // 3. Search & Direct Join
   inputSearch.addEventListener('input', () => {
-    renderRoomsList(p2p.getRooms());
+    renderRoomsList(p2p.getRooms(), true);
   });
 
   inputSearch.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
       e.preventDefault();
-      const code = inputSearch.value.trim().toUpperCase();
-      if (code) p2p.joinRoom(code);
+      const raw = inputSearch.value.trim();
+      if (!raw) return;
+      // If a room matches the search query, join the first matching room; otherwise join by Room ID code
+      const rooms = p2p.getRooms();
+      const exactOrFirst = rooms.find(
+        (r) =>
+          r.id.toLowerCase() === raw.toLowerCase() ||
+          r.name.toLowerCase() === raw.toLowerCase()
+      );
+      if (exactOrFirst) {
+        p2p.joinRoom(exactOrFirst.id);
+      } else {
+        p2p.joinRoom(raw.toUpperCase());
+      }
     }
   });
 
   btnDirectJoin.addEventListener('click', () => {
-    const code = inputSearch.value.trim().toUpperCase();
-    if (code) p2p.joinRoom(code);
+    const raw = inputSearch.value.trim();
+    if (!raw) return;
+    const rooms = p2p.getRooms();
+    const exactOrFirst = rooms.find(
+      (r) =>
+        r.id.toLowerCase() === raw.toLowerCase() ||
+        r.name.toLowerCase() === raw.toLowerCase()
+    );
+    if (exactOrFirst) {
+      p2p.joinRoom(exactOrFirst.id);
+    } else {
+      p2p.joinRoom(raw.toUpperCase());
+    }
   });
 
   btnRefreshRooms.addEventListener('click', () => {
     p2p.requestDiscovery();
-    renderRoomsList(p2p.getRooms());
-    showToast('Refreshed');
+    renderRoomsList(p2p.getRooms(), true);
+    showToast('Refreshed rooms');
   });
 
-  // 4. Host Room Form (5 - 100 members)
+  // 4. Host Room Form (5-100 members)
   hostMaxInput.addEventListener('input', () => {
     hostMaxVal.textContent = hostMaxInput.value;
   });
@@ -350,9 +440,9 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   btnCopyCode.addEventListener('click', () => {
-    if (!p2p.room) return;
-    navigator.clipboard.writeText(p2p.room.id).then(() => {
-      showToast(`Copied ID: ${p2p.room.id}`);
+    if (!p2p.activeRoom) return;
+    navigator.clipboard.writeText(p2p.activeRoom.id).then(() => {
+      showToast(`Copied Room ID: ${p2p.activeRoom.id}`);
     });
   });
 
