@@ -172,18 +172,27 @@ document.addEventListener('DOMContentLoaded', () => {
         left.appendChild(nameSpan);
         li.appendChild(left);
 
+        const right = document.createElement('div');
+        right.className = 'user-row-right';
+
+        const clicksSpan = document.createElement('span');
+        clicksSpan.className = 'user-clicks';
+        clicksSpan.textContent = Number(m.clicks) || 0;
+        right.appendChild(clicksSpan);
+
         if (m.isHost) {
           const tag = document.createElement('span');
           tag.className = 'user-tag';
           tag.textContent = 'Host';
-          li.appendChild(tag);
+          right.appendChild(tag);
         } else if (m.id === p2p.clientId) {
           const tag = document.createElement('span');
           tag.className = 'user-tag';
           tag.textContent = 'You';
-          li.appendChild(tag);
+          right.appendChild(tag);
         }
 
+        li.appendChild(right);
         usersListEl.appendChild(li);
       });
 

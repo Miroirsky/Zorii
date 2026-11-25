@@ -828,6 +828,24 @@ input[type="range"]::-webkit-slider-thumb {
   min-width: 0;
 }
 
+.user-row-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.user-clicks {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  padding: 1px 7px;
+  border-radius: 6px;
+}
+
 .user-row-name {
   white-space: nowrap;
   overflow: hidden;
