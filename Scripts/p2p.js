@@ -12,11 +12,14 @@ class ZoriiEngine {
     this.cb = callbacks || {};
     this.cfg = window.ZORII_CONFIG;
 
-    this.clientId = sessionStorage.getItem('zorii_client_id');
+    this.clientId =
+      sessionStorage.getItem('zorii_client_id') ||
+      localStorage.getItem('zorii_client_id');
     if (!this.clientId) {
       this.clientId = 'u_' + Math.random().toString(36).slice(2, 10);
-      sessionStorage.setItem('zorii_client_id', this.clientId);
     }
+    sessionStorage.setItem('zorii_client_id', this.clientId);
+    localStorage.setItem('zorii_client_id', this.clientId);
 
     this.username = '';
     this.userColor = this.cfg.USER_COLORS[0];
@@ -31,8 +34,8 @@ class ZoriiEngine {
 
     // Active room state
     this.role = null; // 'host' | 'guest' | null
-    this.activeRoom = null; // { id, name, desc, max, hostId, hostName, count, clicks, updatedAt }
-    this.members = new Map(); // clientId -> { id, name, color, isHost, clicks, joinedAt }
+    this.activeRoom = null; // { id, name, desc, max, hostId, hostName, count, level, xp, currentLevelXp, xpNeeded, updatedAt }
+    this.members = new Map(); // clientId -> { id, name, color, isHost, joinedAt }
     this.messages = [];
 
     // WebRTC PeerJS instances
@@ -184,7 +187,8 @@ class ZoriiEngine {
           if (
             !prev ||
             prev.count !== r.count ||
-            prev.clicks !== r.clicks ||
+            prev.level !== r.level ||
+            prev.xp !== r.xp ||
             prev.name !== r.name ||
             prev.desc !== r.desc
           ) {
@@ -206,6 +210,29 @@ class ZoriiEngine {
     } catch (_) {}
   }
 
+  computeRoomLevel(xpValue) {
+    const totalXp = Math.max(0, Math.floor(Number(xpValue) || 0));
+    let level = 1;
+    let xpNeeded = (this.cfg && this.cfg.LEVEL1_XP) || 10;
+    const mult = (this.cfg && this.cfg.LEVEL_XP_MULTIPLIER) || 10;
+    let currentLevelXp = totalXp;
+
+    while (currentLevelXp >= xpNeeded) {
+      currentLevelXp -= xpNeeded;
+      level += 1;
+      xpNeeded *= mult;
+    }
+
+    const progressPct = Math.min(100, Math.max(0, (currentLevelXp / xpNeeded) * 100));
+    return {
+      level,
+      totalXp,
+      currentLevelXp,
+      xpNeeded,
+      progressPct
+    };
+  }
+
   _upsertRoomInList(room) {
     if (!room || !room.id) return;
     const now = Date.now();
@@ -213,9 +240,14 @@ class ZoriiEngine {
       return;
     }
     const prev = this.rooms.get(room.id);
+    const xp = Number(room.xp) || 0;
+    const lvlInfo = this.computeRoomLevel(xp);
     const updated = {
       ...room,
-      clicks: Number(room.clicks) || 0,
+      level: lvlInfo.level,
+      xp: lvlInfo.totalXp,
+      currentLevelXp: lvlInfo.currentLevelXp,
+      xpNeeded: lvlInfo.xpNeeded,
       updatedAt: now
     };
     this.rooms.set(room.id, updated);
@@ -224,7 +256,8 @@ class ZoriiEngine {
     const hasMeaningfulDiff =
       !prev ||
       prev.count !== updated.count ||
-      prev.clicks !== updated.clicks ||
+      prev.xp !== updated.xp ||
+      prev.level !== updated.level ||
       prev.max !== updated.max ||
       prev.name !== updated.name ||
       prev.desc !== updated.desc ||
@@ -266,16 +299,24 @@ class ZoriiEngine {
   }
 
   getRooms() {
-    return Array.from(this.rooms.values()).sort(
-      (a, b) => b.count - a.count || (b.clicks || 0) - (a.clicks || 0) || a.name.localeCompare(b.name)
-    );
+    return Array.from(this.rooms.values()).sort((a, b) => {
+      const lvlA = this.computeRoomLevel(a.xp).level;
+      const lvlB = this.computeRoomLevel(b.xp).level;
+      if (lvlB !== lvlA) return lvlB - lvlA;
+      return (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' });
+    });
   }
 
   _publishRoomRegistry(room) {
     if (!room || !room.id) return;
+    const xp = Number(room.xp) || 0;
+    const lvlInfo = this.computeRoomLevel(xp);
     const payloadObj = {
       ...room,
-      clicks: Number(room.clicks) || 0,
+      level: lvlInfo.level,
+      xp: lvlInfo.totalXp,
+      currentLevelXp: lvlInfo.currentLevelXp,
+      xpNeeded: lvlInfo.xpNeeded,
       timestamp: Date.now(),
       updatedAt: Date.now()
     };
@@ -315,16 +356,85 @@ class ZoriiEngine {
   }
 
   /* =========================================================
+   * SAVED ROOM STATS (HOST PERSISTENCE: LEVELS, MAX MEMBERS — NO MESSAGES/MEMBERS)
+   * ========================================================= */
+  getSavedRooms() {
+    try {
+      const raw = localStorage.getItem(this.cfg.STORAGE_SAVED_ROOMS_KEY);
+      if (!raw) return [];
+      const arr = JSON.parse(raw);
+      if (!Array.isArray(arr)) return [];
+      return arr
+        .filter((r) => r && r.id && r.name)
+        .map((r) => {
+          const lvlInfo = this.computeRoomLevel(r.xp);
+          return {
+            id: r.id,
+            name: r.name,
+            desc: r.desc || '',
+            max: Math.min(this.cfg.MAX_MEMBERS, Math.max(this.cfg.MIN_MEMBERS, Number(r.max) || 25)),
+            level: lvlInfo.level,
+            xp: lvlInfo.totalXp,
+            currentLevelXp: lvlInfo.currentLevelXp,
+            xpNeeded: lvlInfo.xpNeeded,
+            savedAt: r.savedAt || Date.now()
+          };
+        })
+        .sort((a, b) => {
+          if (b.level !== a.level) return b.level - a.level;
+          return (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' });
+        });
+    } catch (_) {
+      return [];
+    }
+  }
+
+  saveCurrentRoomStats() {
+    if (this.role !== 'host' || !this.activeRoom) return null;
+    const lvlInfo = this.computeRoomLevel(this.activeRoom.xp);
+    // Save ONLY room stats (id, name, desc, max, level, xp) — never messages or members
+    const savedEntry = {
+      id: this.activeRoom.id,
+      name: this.activeRoom.name,
+      desc: this.activeRoom.desc || '',
+      max: this.activeRoom.max,
+      level: lvlInfo.level,
+      xp: lvlInfo.totalXp,
+      currentLevelXp: lvlInfo.currentLevelXp,
+      xpNeeded: lvlInfo.xpNeeded,
+      savedAt: Date.now()
+    };
+
+    try {
+      const list = this.getSavedRooms().filter((r) => r.id !== savedEntry.id);
+      list.push(savedEntry);
+      localStorage.setItem(this.cfg.STORAGE_SAVED_ROOMS_KEY, JSON.stringify(list));
+    } catch (_) {}
+
+    return savedEntry;
+  }
+
+  deleteSavedRoom(roomId) {
+    if (!roomId) return;
+    try {
+      const list = this.getSavedRooms().filter((r) => r.id !== roomId);
+      localStorage.setItem(this.cfg.STORAGE_SAVED_ROOMS_KEY, JSON.stringify(list));
+    } catch (_) {}
+  }
+
+  /* =========================================================
    * HOSTING A ROOM (YOUR COMPUTER IS THE SERVER)
    * ========================================================= */
-  hostRoom({ name, desc, max }) {
+  hostRoom({ id, name, desc, max, xp }) {
     this.leaveRoom();
 
     const maxMembers = Math.min(
       this.cfg.MAX_MEMBERS,
       Math.max(this.cfg.MIN_MEMBERS, Number(max) || 25)
     );
-    const roomId = this._generateCode();
+    const roomId = (id && String(id).trim().toUpperCase()) || this._generateCode();
+    const initialXp = Math.max(0, Math.floor(Number(xp) || 0));
+    const lvlInfo = this.computeRoomLevel(initialXp);
 
     this.role = 'host';
     this.activeRoom = {
@@ -336,7 +446,10 @@ class ZoriiEngine {
       hostName: this.username,
       hostColor: this.userColor,
       count: 1,
-      clicks: 0,
+      level: lvlInfo.level,
+      xp: lvlInfo.totalXp,
+      currentLevelXp: lvlInfo.currentLevelXp,
+      xpNeeded: lvlInfo.xpNeeded,
       updatedAt: Date.now()
     };
 
@@ -346,7 +459,6 @@ class ZoriiEngine {
       name: this.username,
       color: this.userColor,
       isHost: true,
-      clicks: 0,
       joinedAt: Date.now()
     });
 
@@ -401,7 +513,11 @@ class ZoriiEngine {
   _hostCommitState() {
     if (this.role !== 'host' || !this.activeRoom) return;
     this.activeRoom.count = this.members.size;
-    this.activeRoom.clicks = Number(this.activeRoom.clicks) || 0;
+    const lvlInfo = this.computeRoomLevel(this.activeRoom.xp);
+    this.activeRoom.level = lvlInfo.level;
+    this.activeRoom.xp = lvlInfo.totalXp;
+    this.activeRoom.currentLevelXp = lvlInfo.currentLevelXp;
+    this.activeRoom.xpNeeded = lvlInfo.xpNeeded;
     this.activeRoom.updatedAt = Date.now();
 
     const snapshot = {
@@ -482,7 +598,6 @@ class ZoriiEngine {
         name: username,
         color: color || (existing && existing.color) || this.cfg.USER_COLORS[0],
         isHost: clientId === this.clientId,
-        clicks: existing ? existing.clicks || 0 : 0,
         joinedAt: existing ? existing.joinedAt : Date.now()
       });
 
@@ -498,25 +613,7 @@ class ZoriiEngine {
       return;
     }
 
-    // 2. Guest or Host clicks the shared live room clicker
-    if (payload.action === 'GUEST_CLICK') {
-      const { clientId, clickId } = payload;
-      if (clickId) {
-        if (this.processedPackets.has(clickId)) return;
-        this.processedPackets.add(clickId);
-      }
-
-      this.activeRoom.clicks = (Number(this.activeRoom.clicks) || 0) + 1;
-      if (clientId && this.members.has(clientId)) {
-        const m = this.members.get(clientId);
-        m.clicks = (Number(m.clicks) || 0) + 1;
-      }
-
-      this._hostCommitState();
-      return;
-    }
-
-    // 3. Guest sends chat message
+    // 2. Guest sends chat message
     if (payload.action === 'GUEST_CHAT') {
       const { clientId, username, color, text, msgId } = payload;
       const cleanText = (text || '').trim();
@@ -533,7 +630,6 @@ class ZoriiEngine {
           name: username || 'Guest',
           color: color || this.cfg.USER_COLORS[0],
           isHost: false,
-          clicks: 0,
           joinedAt: Date.now()
         });
       }
@@ -556,7 +652,7 @@ class ZoriiEngine {
       return;
     }
 
-    // 4. Guest leaves
+    // 3. Guest leaves
     if (payload.action === 'GUEST_LEAVE') {
       this._hostRemoveMember(payload.clientId);
     }
@@ -613,10 +709,14 @@ class ZoriiEngine {
           hostName: 'Host',
           hostColor: this.cfg.USER_COLORS[0],
           count: 1,
-          clicks: 0
+          xp: 0
         };
 
-    this.activeRoom.clicks = Number(this.activeRoom.clicks) || 0;
+    const initLvl = this.computeRoomLevel(this.activeRoom.xp);
+    this.activeRoom.level = initLvl.level;
+    this.activeRoom.xp = initLvl.totalXp;
+    this.activeRoom.currentLevelXp = initLvl.currentLevelXp;
+    this.activeRoom.xpNeeded = initLvl.xpNeeded;
 
     if (
       localSnap &&
@@ -641,8 +741,7 @@ class ZoriiEngine {
         id: hid,
         name: this.activeRoom.hostName || 'Host',
         color: this.activeRoom.hostColor || this.cfg.USER_COLORS[0],
-        isHost: true,
-        clicks: 0
+        isHost: true
       });
     }
 
@@ -650,8 +749,7 @@ class ZoriiEngine {
       id: this.clientId,
       name: this.username,
       color: this.userColor,
-      isHost: false,
-      clicks: 0
+      isHost: false
     });
 
     this.messages = (localSnap && Array.isArray(localSnap.messages))
@@ -769,9 +867,14 @@ class ZoriiEngine {
   _guestApplySnapshot(snap) {
     if (!snap || this.role !== 'guest' || !this.activeRoom) return;
     if (snap.room) {
+      const xp = Number(snap.room.xp) || 0;
+      const lvlInfo = this.computeRoomLevel(xp);
       this.activeRoom = {
         ...snap.room,
-        clicks: Number(snap.room.clicks) || 0
+        level: lvlInfo.level,
+        xp: lvlInfo.totalXp,
+        currentLevelXp: lvlInfo.currentLevelXp,
+        xpNeeded: lvlInfo.xpNeeded
       };
     }
     if (Array.isArray(snap.members)) {
@@ -782,8 +885,7 @@ class ZoriiEngine {
           id: this.clientId,
           name: this.username,
           color: this.userColor,
-          isHost: false,
-          clicks: 0
+          isHost: false
         });
       }
     }
@@ -804,39 +906,8 @@ class ZoriiEngine {
   }
 
   /* =========================================================
-   * LIVE CLICKER, SENDING CHAT & LEAVING ROOM
+   * SENDING CHAT & LEAVING ROOM
    * ========================================================= */
-  sendClick() {
-    if (!this.activeRoom) return;
-    const clickId = 'clk_' + this.clientId + '_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
-
-    if (this.role === 'host') {
-      this._hostProcessGuestAction({
-        action: 'GUEST_CLICK',
-        clientId: this.clientId,
-        clickId
-      });
-    } else if (this.role === 'guest') {
-      // Optimistic local increment so clicker feels 0ms responsive, then synced with host's authoritative total
-      this.activeRoom.clicks = (Number(this.activeRoom.clicks) || 0) + 1;
-      if (this.members.has(this.clientId)) {
-        const me = this.members.get(this.clientId);
-        me.clicks = (Number(me.clicks) || 0) + 1;
-      }
-      this._notifyUIState();
-
-      const clickPkt = {
-        action: 'GUEST_CLICK',
-        clientId: this.clientId,
-        clickId
-      };
-      if (this.guestWebRtcConn && this.guestWebRtcConn.open) {
-        try { this.guestWebRtcConn.send(clickPkt); } catch (_) {}
-      }
-      this._emitRoomPacket(this.activeRoom.id, 'HOST', clickPkt);
-    }
-  }
-
   sendMessage(text) {
     const clean = (text || '').trim();
     if (!clean || !this.activeRoom) return;

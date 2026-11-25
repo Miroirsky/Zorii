@@ -43,19 +43,23 @@ document.addEventListener('DOMContentLoaded', () => {
   const hostDescInput = document.getElementById('host-desc');
   const hostMaxInput = document.getElementById('host-max');
   const hostMaxVal = document.getElementById('host-max-val');
+  const savedRoomsSection = document.getElementById('saved-rooms-section');
+  const savedRoomsListEl = document.getElementById('saved-rooms-list');
 
-  // Room / Chat + Live Clicker
+  // Room / Chat
   const roomTitleEl = document.getElementById('room-title');
   const roomDescEl = document.getElementById('room-desc');
   const roomHostTag = document.getElementById('room-host-tag');
   const roomCodeText = document.getElementById('room-code-text');
+  const btnSaveRoom = document.getElementById('btn-save-room');
   const btnCopyCode = document.getElementById('btn-copy-code');
   const btnLeaveRoom = document.getElementById('btn-leave-room');
   const chatMessagesEl = document.getElementById('chat-messages');
   const formChat = document.getElementById('form-chat');
   const inputChat = document.getElementById('input-chat');
-  const btnRoomClicker = document.getElementById('btn-room-clicker');
-  const roomClickCountEl = document.getElementById('room-click-count');
+  const roomLevelValEl = document.getElementById('room-level-val');
+  const roomXpFillEl = document.getElementById('room-xp-fill');
+  const roomXpTextEl = document.getElementById('room-xp-text');
   const usersCountEl = document.getElementById('users-count');
   const usersListEl = document.getElementById('users-list');
   const toastEl = document.getElementById('toast');
@@ -113,9 +117,23 @@ document.addEventListener('DOMContentLoaded', () => {
       renderRoomsList(p2p.getRooms(), true);
       setTimeout(() => inputSearch.focus(), 40);
     } else if (viewId === 'view-host') {
+      renderSavedRoomsList();
       setTimeout(() => hostNameInput.focus(), 40);
     } else if (viewId === 'view-room') {
       setTimeout(() => inputChat.focus(), 40);
+    }
+  }
+
+  function updateRoomXpUI(xpValue) {
+    const lvlInfo = p2p.computeRoomLevel(xpValue);
+    if (roomLevelValEl) {
+      roomLevelValEl.textContent = lvlInfo.level;
+    }
+    if (roomXpFillEl) {
+      roomXpFillEl.style.height = `${lvlInfo.progressPct}%`;
+    }
+    if (roomXpTextEl) {
+      roomXpTextEl.textContent = `${lvlInfo.currentLevelXp} / ${lvlInfo.xpNeeded} XP`;
     }
   }
 
@@ -133,7 +151,10 @@ document.addEventListener('DOMContentLoaded', () => {
       roomDescEl.textContent = room.desc || '';
       roomCodeText.textContent = room.id;
       roomHostTag.textContent = isHost ? 'Hosted on your PC' : `Host: ${room.hostName}`;
-      roomClickCountEl.textContent = Number(room.clicks) || 0;
+      if (btnSaveRoom) {
+        btnSaveRoom.classList.toggle('hidden', !isHost);
+      }
+      updateRoomXpUI(room.xp);
       showView('view-room');
     },
     onRoomState: ({ room, isHost, members, messages }) => {
@@ -141,9 +162,12 @@ document.addEventListener('DOMContentLoaded', () => {
       roomDescEl.textContent = room.desc || '';
       roomCodeText.textContent = room.id;
       roomHostTag.textContent = isHost ? 'Hosted on your PC' : `Host: ${room.hostName}`;
+      if (btnSaveRoom) {
+        btnSaveRoom.classList.toggle('hidden', !isHost);
+      }
 
-      // Live shared clicker counter
-      roomClickCountEl.textContent = Number(room.clicks) || 0;
+      // Left vertical XP bar
+      updateRoomXpUI(room.xp);
 
       // Render connected members list with each user's custom color
       usersCountEl.textContent = `${members.length} / ${room.max}`;
@@ -174,11 +198,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const right = document.createElement('div');
         right.className = 'user-row-right';
-
-        const clicksSpan = document.createElement('span');
-        clicksSpan.className = 'user-clicks';
-        clicksSpan.textContent = Number(m.clicks) || 0;
-        right.appendChild(clicksSpan);
 
         if (m.isHost) {
           const tag = document.createElement('span');
@@ -274,13 +293,20 @@ document.addEventListener('DOMContentLoaded', () => {
     const rawSearch = inputSearch.value.trim();
     const query = rawSearch.toLowerCase();
 
-    const filtered = rooms.filter(
-      (r) =>
-        r.name.toLowerCase().includes(query) ||
-        (r.desc && r.desc.toLowerCase().includes(query)) ||
-        r.id.toLowerCase().includes(query) ||
-        (r.hostName && r.hostName.toLowerCase().includes(query))
-    );
+    const filtered = rooms
+      .filter(
+        (r) =>
+          r.name.toLowerCase().includes(query) ||
+          (r.desc && r.desc.toLowerCase().includes(query)) ||
+          r.id.toLowerCase().includes(query) ||
+          (r.hostName && r.hostName.toLowerCase().includes(query))
+      )
+      .sort((a, b) => {
+        const lvlA = p2p.computeRoomLevel(a.xp).level;
+        const lvlB = p2p.computeRoomLevel(b.xp).level;
+        if (lvlB !== lvlA) return lvlB - lvlA;
+        return (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' });
+      });
 
     const cleanCode = rawSearch.toUpperCase();
     if (cleanCode.length >= 3 && /^[A-Z0-9-]+$/.test(cleanCode)) {
@@ -293,7 +319,10 @@ document.addEventListener('DOMContentLoaded', () => {
       query +
       '::' +
       filtered
-        .map((r) => `${r.id}:${r.name}:${r.desc}:${r.hostName}:${r.count}:${r.max}:${r.clicks || 0}`)
+        .map((r) => {
+          const lvl = p2p.computeRoomLevel(r.xp).level;
+          return `${r.id}:${r.name}:${r.desc}:${r.hostName}:${r.count}:${r.max}:${r.xp || 0}:${lvl}`;
+        })
         .join('|');
 
     if (!force && signature === lastRenderedSignature) {
@@ -314,6 +343,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     filtered.forEach((r) => {
+      const lvlInfo = p2p.computeRoomLevel(r.xp);
       const item = document.createElement('div');
       item.className = 'room-item';
       item.setAttribute('data-room-id', r.id);
@@ -324,6 +354,10 @@ document.addEventListener('DOMContentLoaded', () => {
       const top = document.createElement('div');
       top.className = 'room-item-top';
 
+      const levelBadge = document.createElement('span');
+      levelBadge.className = 'room-item-level';
+      levelBadge.textContent = `Lvl ${lvlInfo.level}`;
+
       const name = document.createElement('span');
       name.className = 'room-item-name';
       name.textContent = r.name;
@@ -332,13 +366,9 @@ document.addEventListener('DOMContentLoaded', () => {
       host.className = 'room-item-host';
       host.textContent = r.hostName;
 
-      const clicksBadge = document.createElement('span');
-      clicksBadge.className = 'room-item-host';
-      clicksBadge.textContent = `${Number(r.clicks) || 0} clicks`;
-
+      top.appendChild(levelBadge);
       top.appendChild(name);
       top.appendChild(host);
-      top.appendChild(clicksBadge);
       info.appendChild(top);
 
       if (r.desc) {
@@ -467,7 +497,91 @@ document.addEventListener('DOMContentLoaded', () => {
     showToast('Refreshed rooms');
   });
 
-  // 4. Host Room Form (5-100 members)
+  // 4. Host Room Form & Saved Rooms (5-100 members)
+  function renderSavedRoomsList() {
+    if (!savedRoomsSection || !savedRoomsListEl) return;
+    const savedRooms = p2p.getSavedRooms();
+    savedRoomsListEl.innerHTML = '';
+
+    if (savedRooms.length === 0) {
+      savedRoomsSection.classList.add('hidden');
+      return;
+    }
+
+    savedRoomsSection.classList.remove('hidden');
+
+    savedRooms.forEach((sr) => {
+      const row = document.createElement('div');
+      row.className = 'saved-room-item';
+
+      const info = document.createElement('div');
+      info.className = 'saved-room-info';
+
+      const top = document.createElement('div');
+      top.className = 'saved-room-top';
+
+      const lvl = document.createElement('span');
+      lvl.className = 'room-item-level';
+      lvl.textContent = `Lvl ${sr.level}`;
+
+      const title = document.createElement('span');
+      title.className = 'saved-room-name';
+      title.textContent = sr.name;
+
+      const meta = document.createElement('span');
+      meta.className = 'room-item-host';
+      meta.textContent = `Max ${sr.max}`;
+
+      top.appendChild(lvl);
+      top.appendChild(title);
+      top.appendChild(meta);
+      info.appendChild(top);
+
+      if (sr.desc) {
+        const desc = document.createElement('div');
+        desc.className = 'room-item-desc';
+        desc.textContent = sr.desc;
+        info.appendChild(desc);
+      }
+
+      const actions = document.createElement('div');
+      actions.className = 'saved-room-actions';
+
+      const loadBtn = document.createElement('button');
+      loadBtn.type = 'button';
+      loadBtn.className = 'btn-room-join';
+      loadBtn.textContent = 'Host';
+      loadBtn.addEventListener('click', () => {
+        p2p.hostRoom({
+          id: sr.id,
+          name: sr.name,
+          desc: sr.desc,
+          max: sr.max,
+          xp: sr.xp
+        });
+      });
+
+      const delBtn = document.createElement('button');
+      delBtn.type = 'button';
+      delBtn.className = 'btn-icon btn-leave btn-saved-del';
+      delBtn.title = 'Delete Saved Room';
+      delBtn.innerHTML =
+        '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>';
+      delBtn.addEventListener('click', () => {
+        p2p.deleteSavedRoom(sr.id);
+        renderSavedRoomsList();
+        showToast(`Deleted saved room "${sr.name}"`);
+      });
+
+      actions.appendChild(loadBtn);
+      actions.appendChild(delBtn);
+
+      row.appendChild(info);
+      row.appendChild(actions);
+      savedRoomsListEl.appendChild(row);
+    });
+  }
+
   hostMaxInput.addEventListener('input', () => {
     hostMaxVal.textContent = hostMaxInput.value;
   });
@@ -484,10 +598,15 @@ document.addEventListener('DOMContentLoaded', () => {
     hostDescInput.value = '';
   });
 
-  // 5. Room Chat & Live Shared Clicker
-  btnRoomClicker.addEventListener('click', () => {
-    p2p.sendClick();
-  });
+  // 5. Room Chat & Save Room Stats
+  if (btnSaveRoom) {
+    btnSaveRoom.addEventListener('click', () => {
+      const saved = p2p.saveCurrentRoomStats();
+      if (saved) {
+        showToast(`Saved room "${saved.name}" (Lvl ${saved.level}, Max ${saved.max})`);
+      }
+    });
+  }
 
   formChat.addEventListener('submit', (e) => {
     e.preventDefault();

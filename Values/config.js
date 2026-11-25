@@ -6,6 +6,7 @@ window.ZORII_CONFIG = {
   STORAGE_USER_KEY: 'zorii_username',
   STORAGE_COLOR_KEY: 'zorii_user_color',
   STORAGE_ROOMS_KEY: 'zorii_rooms_v2',
+  STORAGE_SAVED_ROOMS_KEY: 'zorii_host_saved_rooms_v2',
   STORAGE_ROOM_STATE_PREFIX: 'zorii_state_v2_',
   USER_COLORS: [
     '#a855f7', // Purple
@@ -30,5 +31,7 @@ window.ZORII_CONFIG = {
   HEARTBEAT_MS: 3000,
   ROOM_TTL_MS: 12000,
   MIN_MEMBERS: 5,
-  MAX_MEMBERS: 100
+  MAX_MEMBERS: 100,
+  LEVEL1_XP: 10,
+  LEVEL_XP_MULTIPLIER: 10
 };

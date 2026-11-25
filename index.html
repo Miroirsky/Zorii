@@ -127,12 +127,31 @@
           />
           <button type="submit" class="btn-primary">Create</button>
         </form>
+
+        <div id="saved-rooms-section" class="saved-rooms-section hidden">
+          <div class="saved-rooms-header">
+            <span>Saved Rooms</span>
+          </div>
+          <div id="saved-rooms-list" class="saved-rooms-list"></div>
+        </div>
       </div>
     </section>
 
-    <!-- 5. Room / Chat + Live Clicker View -->
+    <!-- 5. Room / Chat View -->
     <section id="view-room" class="view">
       <div class="room-layout">
+        <!-- Left XP Sidebar: Vertical Bottom-to-Top Room XP Bar -->
+        <aside class="xp-sidebar">
+          <div class="xp-level-badge">
+            <span class="xp-level-label">LVL</span>
+            <span id="room-level-val" class="xp-level-num">1</span>
+          </div>
+          <div class="xp-bar-track">
+            <div id="room-xp-fill" class="xp-bar-fill" style="height: 0%;"></div>
+          </div>
+          <div id="room-xp-text" class="xp-bar-text">0 / 10 XP</div>
+        </aside>
+
         <!-- Main Chat Screen -->
         <div class="chat-main">
           <div class="room-bar">
@@ -144,6 +163,10 @@
               <p id="room-desc"></p>
             </div>
             <div class="room-controls">
+              <button id="btn-save-room" class="btn-code btn-save-room hidden" title="Save Room Stats (Levels, Max Members)">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+                <span>Save</span>
+              </button>
               <button id="btn-copy-code" class="btn-code" title="Copy Room ID">
                 <span id="room-code-text"></span>
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
@@ -169,14 +192,8 @@
           </form>
         </div>
 
-        <!-- Right Sidebar: Live Shared Clicker + Connected Users -->
+        <!-- Right Sidebar: Connected Users -->
         <aside class="users-sidebar">
-          <div class="clicker-box">
-            <button type="button" id="btn-room-clicker" class="btn-clicker">
-              <span id="room-click-count" class="clicker-count">0</span>
-              <span class="clicker-sub">Room Clicks</span>
-            </button>
-          </div>
           <div class="users-header">
             <span id="users-count">0 / 0</span>
           </div>
