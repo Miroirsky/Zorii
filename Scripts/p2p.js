@@ -1,26 +1,17 @@
 /**
  * Zorii V2 — Decentralized Host-Authoritative Multiplayer Engine
  *
- * Architecture:
- * 1. Host Computer = Authoritative Server:
- *    When a user hosts a room, their computer owns the room state, validates the 5-100 member cap,
- *    maintains the active connected users list, and broadcasts chat messages to all connected peers.
- *
- * 2. Retained MQTT Registry + Local Registry:
- *    Hosts publish their room metadata with MQTT `retain: true` on `zorii/v2/registry/<roomId>`
- *    AND write to shared localStorage. Any user opening the room menu gets the full room list immediately.
- *
- * 3. Triple-Redundant P2P Data Transport:
- *    - Direct WebRTC DataChannels (PeerJS with Google/Twilio STUN ICE servers)
- *    - Dedicated Room Pub/Sub Relay (`zorii/v2/room/<roomId>`) over WebSocket MQTT
- *    - Instant Local Shared Memory (`BroadcastChannel` + `localStorage` state files)
+ * Features:
+ * - Host Computer = Authoritative Server (manages connected members, 5-100 cap, chat, user colors, and live shared room clicker).
+ * - Live Shared Clicker: Every click from any player is processed by the host computer and broadcast in real time to all connected players,
+ *   plus announced to the room discovery list so players see the live click count before and when joining.
+ * - Custom User Colors: Synced across the connected users list and chat messages.
  */
 class ZoriiEngine {
   constructor(callbacks) {
     this.cb = callbacks || {};
     this.cfg = window.ZORII_CONFIG;
 
-    // Persistent tab session ID so a tab has a stable identity
     this.clientId = sessionStorage.getItem('zorii_client_id');
     if (!this.clientId) {
       this.clientId = 'u_' + Math.random().toString(36).slice(2, 10);
@@ -28,6 +19,7 @@ class ZoriiEngine {
     }
 
     this.username = '';
+    this.userColor = this.cfg.USER_COLORS[0];
     this.rooms = new Map(); // roomId -> room metadata
 
     // Transports
@@ -39,14 +31,14 @@ class ZoriiEngine {
 
     // Active room state
     this.role = null; // 'host' | 'guest' | null
-    this.activeRoom = null; // { id, name, desc, max, hostId, hostName, count, updatedAt }
-    this.members = new Map(); // clientId -> { id, name, isHost, joinedAt }
-    this.messages = []; // array of chat & system messages
+    this.activeRoom = null; // { id, name, desc, max, hostId, hostName, count, clicks, updatedAt }
+    this.members = new Map(); // clientId -> { id, name, color, isHost, clicks, joinedAt }
+    this.messages = [];
 
     // WebRTC PeerJS instances
     this.peer = null;
-    this.hostWebRtcConns = new Map(); // clientId -> DataConnection (used when role === 'host')
-    this.guestWebRtcConn = null; // DataConnection to host (used when role === 'guest')
+    this.hostWebRtcConns = new Map();
+    this.guestWebRtcConn = null;
 
     this.heartbeatInterval = null;
     this.guestSyncInterval = null;
@@ -54,14 +46,28 @@ class ZoriiEngine {
     this._boot();
   }
 
-  setUsername(name) {
+  setProfile(name, color) {
     this.username = (name || '').trim();
+    this.userColor = color || this.cfg.USER_COLORS[0];
+
     if (this.activeRoom && this.members.has(this.clientId)) {
       const me = this.members.get(this.clientId);
       me.name = this.username;
+      me.color = this.userColor;
       if (this.role === 'host') {
         this.activeRoom.hostName = this.username;
         this._hostCommitState();
+      } else if (this.role === 'guest') {
+        const joinPkt = {
+          action: 'GUEST_JOIN',
+          clientId: this.clientId,
+          username: this.username,
+          color: this.userColor
+        };
+        if (this.guestWebRtcConn && this.guestWebRtcConn.open) {
+          try { this.guestWebRtcConn.send(joinPkt); } catch (_) {}
+        }
+        this._emitRoomPacket(this.activeRoom.id, 'HOST', joinPkt);
       }
     }
   }
@@ -70,15 +76,12 @@ class ZoriiEngine {
    * BOOT & TRANSPORT INITIALIZATION
    * ========================================================= */
   _boot() {
-    // 1. Read any local rooms immediately
     this._loadLocalRooms();
 
-    // 2. Same-browser BroadcastChannel
     if (this.bus) {
       this.bus.onmessage = (e) => this._handleEnvelope(e.data);
     }
 
-    // 3. Cross-tab storage events
     window.addEventListener('storage', (e) => {
       if (e.key === this.cfg.STORAGE_ROOMS_KEY) {
         this._loadLocalRooms();
@@ -98,13 +101,10 @@ class ZoriiEngine {
       }
     });
 
-    // 4. Connect to public WebSocket MQTT brokers for cross-network room discovery & P2P signaling
     this._initMqttBrokers();
 
-    // 5. Periodic room TTL cleanup (only fires callback when room list actually changes)
     setInterval(() => this._pruneExpiredRooms(), 3000);
 
-    // 6. Clean disconnect on tab close
     window.addEventListener('beforeunload', () => {
       this.leaveRoom();
     });
@@ -123,13 +123,10 @@ class ZoriiEngine {
         });
 
         client.on('connect', () => {
-          // Subscribe to wildcard retained room registry
           client.subscribe(this.cfg.REGISTRY_PREFIX + '+');
-          // If already inside a room, subscribe to its dedicated topic
           if (this.activeRoom) {
             client.subscribe(this.cfg.ROOM_TOPIC_PREFIX + this.activeRoom.id);
           }
-          // If hosting, publish retained registry entry immediately
           if (this.role === 'host' && this.activeRoom) {
             this._publishRoomRegistry(this.activeRoom);
           }
@@ -137,7 +134,6 @@ class ZoriiEngine {
 
         client.on('message', (topic, payloadBuf) => {
           const str = payloadBuf ? payloadBuf.toString() : '';
-          // Empty retained message = room closed
           if (topic.startsWith(this.cfg.REGISTRY_PREFIX)) {
             const roomId = topic.slice(this.cfg.REGISTRY_PREFIX.length);
             if (!str) {
@@ -185,7 +181,13 @@ class ZoriiEngine {
       list.forEach((r) => {
         if (r && r.id && now - r.updatedAt < this.cfg.ROOM_TTL_MS) {
           const prev = this.rooms.get(r.id);
-          if (!prev || prev.count !== r.count || prev.name !== r.name || prev.desc !== r.desc) {
+          if (
+            !prev ||
+            prev.count !== r.count ||
+            prev.clicks !== r.clicks ||
+            prev.name !== r.name ||
+            prev.desc !== r.desc
+          ) {
             changed = true;
           }
           this.rooms.set(r.id, r);
@@ -207,13 +209,13 @@ class ZoriiEngine {
   _upsertRoomInList(room) {
     if (!room || !room.id) return;
     const now = Date.now();
-    // Ignore stale retained rooms older than 25 seconds
     if (room.timestamp && now - room.timestamp > 25000) {
       return;
     }
     const prev = this.rooms.get(room.id);
     const updated = {
       ...room,
+      clicks: Number(room.clicks) || 0,
       updatedAt: now
     };
     this.rooms.set(room.id, updated);
@@ -222,6 +224,7 @@ class ZoriiEngine {
     const hasMeaningfulDiff =
       !prev ||
       prev.count !== updated.count ||
+      prev.clicks !== updated.clicks ||
       prev.max !== updated.max ||
       prev.name !== updated.name ||
       prev.desc !== updated.desc ||
@@ -246,7 +249,6 @@ class ZoriiEngine {
     const now = Date.now();
     let changed = false;
     for (const [id, r] of this.rooms.entries()) {
-      // Never prune a room we are currently hosting
       if (this.role === 'host' && this.activeRoom && this.activeRoom.id === id) {
         continue;
       }
@@ -265,7 +267,7 @@ class ZoriiEngine {
 
   getRooms() {
     return Array.from(this.rooms.values()).sort(
-      (a, b) => b.count - a.count || a.name.localeCompare(b.name)
+      (a, b) => b.count - a.count || (b.clicks || 0) - (a.clicks || 0) || a.name.localeCompare(b.name)
     );
   }
 
@@ -273,6 +275,7 @@ class ZoriiEngine {
     if (!room || !room.id) return;
     const payloadObj = {
       ...room,
+      clicks: Number(room.clicks) || 0,
       timestamp: Date.now(),
       updatedAt: Date.now()
     };
@@ -301,7 +304,6 @@ class ZoriiEngine {
     this.mqttClients.forEach((c) => {
       if (c && c.connected) {
         try {
-          // Publishing empty buffer with retain: true deletes the retained MQTT message
           c.publish(regTopic, '', { qos: 0, retain: true });
         } catch (_) {}
       }
@@ -332,7 +334,9 @@ class ZoriiEngine {
       max: maxMembers,
       hostId: this.clientId,
       hostName: this.username,
+      hostColor: this.userColor,
       count: 1,
+      clicks: 0,
       updatedAt: Date.now()
     };
 
@@ -340,7 +344,9 @@ class ZoriiEngine {
     this.members.set(this.clientId, {
       id: this.clientId,
       name: this.username,
+      color: this.userColor,
       isHost: true,
+      clicks: 0,
       joinedAt: Date.now()
     });
 
@@ -352,13 +358,8 @@ class ZoriiEngine {
       }
     ];
 
-    // 1. Subscribe to dedicated room channel on all MQTT brokers
     this._subscribeMqttRoom(roomId);
-
-    // 2. Start WebRTC PeerJS Host node on this computer
     this._startHostWebRTC(roomId);
-
-    // 3. Commit authoritative state & announce room
     this._hostCommitState();
 
     this.heartbeatInterval = setInterval(() => {
@@ -368,7 +369,6 @@ class ZoriiEngine {
       }
     }, this.cfg.HEARTBEAT_MS);
 
-    // 4. Open Room Screen
     if (this.cb.onEnterRoom) {
       this.cb.onEnterRoom(this.activeRoom, true);
     }
@@ -401,6 +401,7 @@ class ZoriiEngine {
   _hostCommitState() {
     if (this.role !== 'host' || !this.activeRoom) return;
     this.activeRoom.count = this.members.size;
+    this.activeRoom.clicks = Number(this.activeRoom.clicks) || 0;
     this.activeRoom.updatedAt = Date.now();
 
     const snapshot = {
@@ -410,19 +411,14 @@ class ZoriiEngine {
       updatedAt: Date.now()
     };
 
-    // 1. Save to local storage for instant local tabs
     this._hostSaveLocalSnapshot(snapshot);
-
-    // 2. Update registry count
     this._publishRoomRegistry(this.activeRoom);
 
-    // 3. Broadcast authoritative snapshot to all guests via WebRTC + Room Topic + Bus
     this._hostBroadcastToGuests({
       action: 'HOST_SNAPSHOT',
       snapshot
     });
 
-    // 4. Update Host UI
     this._notifyUIState();
   }
 
@@ -445,27 +441,25 @@ class ZoriiEngine {
   _hostBroadcastToGuests(payload) {
     if (this.role !== 'host' || !this.activeRoom) return;
 
-    // Send over all connected WebRTC DataChannels
     for (const conn of this.hostWebRtcConns.values()) {
       if (conn && conn.open) {
         try { conn.send(payload); } catch (_) {}
       }
     }
 
-    // Also send over multi-transport room channel (BroadcastChannel + MQTT Room Topic)
     this._emitRoomPacket(this.activeRoom.id, 'ALL_GUESTS', payload);
   }
 
   _hostProcessGuestAction(payload, webrtcConn) {
     if (!payload || !payload.action || this.role !== 'host' || !this.activeRoom) return;
 
-    // Guest wants to join the room
+    // 1. Guest joins or updates profile
     if (payload.action === 'GUEST_JOIN') {
-      const { clientId, username } = payload;
+      const { clientId, username, color } = payload;
       if (!clientId || !username) return;
 
-      const alreadyMember = this.members.has(clientId);
-      if (!alreadyMember && this.members.size >= this.activeRoom.max) {
+      const existing = this.members.get(clientId);
+      if (!existing && this.members.size >= this.activeRoom.max) {
         const rejectPkt = {
           action: 'HOST_REJECT',
           targetId: clientId,
@@ -486,11 +480,13 @@ class ZoriiEngine {
       this.members.set(clientId, {
         id: clientId,
         name: username,
+        color: color || (existing && existing.color) || this.cfg.USER_COLORS[0],
         isHost: clientId === this.clientId,
-        joinedAt: Date.now()
+        clicks: existing ? existing.clicks || 0 : 0,
+        joinedAt: existing ? existing.joinedAt : Date.now()
       });
 
-      if (!alreadyMember) {
+      if (!existing) {
         this.messages.push({
           id: 'sys_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
           type: 'system',
@@ -502,34 +498,55 @@ class ZoriiEngine {
       return;
     }
 
-    // Guest sent a chat message to the host computer
+    // 2. Guest or Host clicks the shared live room clicker
+    if (payload.action === 'GUEST_CLICK') {
+      const { clientId, clickId } = payload;
+      if (clickId) {
+        if (this.processedPackets.has(clickId)) return;
+        this.processedPackets.add(clickId);
+      }
+
+      this.activeRoom.clicks = (Number(this.activeRoom.clicks) || 0) + 1;
+      if (clientId && this.members.has(clientId)) {
+        const m = this.members.get(clientId);
+        m.clicks = (Number(m.clicks) || 0) + 1;
+      }
+
+      this._hostCommitState();
+      return;
+    }
+
+    // 3. Guest sends chat message
     if (payload.action === 'GUEST_CHAT') {
-      const { clientId, username, text, msgId } = payload;
+      const { clientId, username, color, text, msgId } = payload;
       const cleanText = (text || '').trim();
       if (!cleanText || !clientId) return;
 
-      // Deduplicate message ID
       if (msgId && this.messages.some((m) => m.id === msgId)) {
         return;
       }
 
-      // Auto-register member if room has space
       if (!this.members.has(clientId)) {
         if (this.members.size >= this.activeRoom.max) return;
         this.members.set(clientId, {
           id: clientId,
           name: username || 'Guest',
+          color: color || this.cfg.USER_COLORS[0],
           isHost: false,
+          clicks: 0,
           joinedAt: Date.now()
         });
       }
 
       const sender = this.members.get(clientId);
+      if (color) sender.color = color;
+
       const msg = {
         id: msgId || ('msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7)),
         type: 'user',
         clientId: sender.id,
         author: sender.name,
+        color: sender.color || this.cfg.USER_COLORS[0],
         text: cleanText.slice(0, 500),
         time: this._formatTime(new Date())
       };
@@ -539,7 +556,7 @@ class ZoriiEngine {
       return;
     }
 
-    // Guest left the room
+    // 4. Guest leaves
     if (payload.action === 'GUEST_LEAVE') {
       this._hostRemoveMember(payload.clientId);
     }
@@ -569,7 +586,6 @@ class ZoriiEngine {
     const roomId = (rawRoomId || '').trim().toUpperCase();
     if (!roomId) return;
 
-    // If this tab is ALREADY hosting or inside this exact room, just switch to the room screen!
     if (this.activeRoom && this.activeRoom.id === roomId) {
       if (this.cb.onEnterRoom) {
         this.cb.onEnterRoom(this.activeRoom, this.role === 'host');
@@ -595,10 +611,13 @@ class ZoriiEngine {
           max: 25,
           hostId: 'host_' + roomId,
           hostName: 'Host',
-          count: 1
+          hostColor: this.cfg.USER_COLORS[0],
+          count: 1,
+          clicks: 0
         };
 
-    // Check if room is already full before joining
+    this.activeRoom.clicks = Number(this.activeRoom.clicks) || 0;
+
     if (
       localSnap &&
       Array.isArray(localSnap.members) &&
@@ -613,7 +632,6 @@ class ZoriiEngine {
       return;
     }
 
-    // Hydrate initial members & messages so the Room Screen opens immediately upon click
     this.members.clear();
     if (localSnap && Array.isArray(localSnap.members)) {
       localSnap.members.forEach((m) => this.members.set(m.id, m));
@@ -622,14 +640,18 @@ class ZoriiEngine {
       this.members.set(hid, {
         id: hid,
         name: this.activeRoom.hostName || 'Host',
-        isHost: true
+        color: this.activeRoom.hostColor || this.cfg.USER_COLORS[0],
+        isHost: true,
+        clicks: 0
       });
     }
 
     this.members.set(this.clientId, {
       id: this.clientId,
       name: this.username,
-      isHost: false
+      color: this.userColor,
+      isHost: false,
+      clicks: 0
     });
 
     this.messages = (localSnap && Array.isArray(localSnap.messages))
@@ -642,26 +664,22 @@ class ZoriiEngine {
           }
         ];
 
-    // 1. Immediately switch UI to Room Screen
     if (this.cb.onEnterRoom) {
       this.cb.onEnterRoom(this.activeRoom, false);
     }
     this._notifyUIState();
 
-    // 2. Subscribe to dedicated room topic
     this._subscribeMqttRoom(roomId);
-
-    // 3. Connect WebRTC DataChannel to host's computer
     this._startGuestWebRTC(roomId);
 
-    // 4. Send GUEST_JOIN handshake to host computer
     let hostSynced = false;
     const sendJoinPacket = () => {
       if (this.role !== 'guest' || !this.activeRoom) return;
       const joinPkt = {
         action: 'GUEST_JOIN',
         clientId: this.clientId,
-        username: this.username
+        username: this.username,
+        color: this.userColor
       };
       if (this.guestWebRtcConn && this.guestWebRtcConn.open) {
         try { this.guestWebRtcConn.send(joinPkt); } catch (_) {}
@@ -675,7 +693,6 @@ class ZoriiEngine {
 
     sendJoinPacket();
 
-    // Poll local snapshot & retry handshake until synced
     let attempts = 0;
     this.guestSyncInterval = setInterval(() => {
       if (this.role !== 'guest' || !this.activeRoom) return;
@@ -711,7 +728,8 @@ class ZoriiEngine {
           conn.send({
             action: 'GUEST_JOIN',
             clientId: this.clientId,
-            username: this.username
+            username: this.username,
+            color: this.userColor
           });
         });
 
@@ -751,17 +769,21 @@ class ZoriiEngine {
   _guestApplySnapshot(snap) {
     if (!snap || this.role !== 'guest' || !this.activeRoom) return;
     if (snap.room) {
-      this.activeRoom = { ...snap.room };
+      this.activeRoom = {
+        ...snap.room,
+        clicks: Number(snap.room.clicks) || 0
+      };
     }
     if (Array.isArray(snap.members)) {
       this.members.clear();
       snap.members.forEach((m) => this.members.set(m.id, m));
-      // Keep self visible while join packet is in flight
       if (!this.members.has(this.clientId)) {
         this.members.set(this.clientId, {
           id: this.clientId,
           name: this.username,
-          isHost: false
+          color: this.userColor,
+          isHost: false,
+          clicks: 0
         });
       }
     }
@@ -782,8 +804,39 @@ class ZoriiEngine {
   }
 
   /* =========================================================
-   * SENDING CHAT & LEAVING ROOM
+   * LIVE CLICKER, SENDING CHAT & LEAVING ROOM
    * ========================================================= */
+  sendClick() {
+    if (!this.activeRoom) return;
+    const clickId = 'clk_' + this.clientId + '_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+
+    if (this.role === 'host') {
+      this._hostProcessGuestAction({
+        action: 'GUEST_CLICK',
+        clientId: this.clientId,
+        clickId
+      });
+    } else if (this.role === 'guest') {
+      // Optimistic local increment so clicker feels 0ms responsive, then synced with host's authoritative total
+      this.activeRoom.clicks = (Number(this.activeRoom.clicks) || 0) + 1;
+      if (this.members.has(this.clientId)) {
+        const me = this.members.get(this.clientId);
+        me.clicks = (Number(me.clicks) || 0) + 1;
+      }
+      this._notifyUIState();
+
+      const clickPkt = {
+        action: 'GUEST_CLICK',
+        clientId: this.clientId,
+        clickId
+      };
+      if (this.guestWebRtcConn && this.guestWebRtcConn.open) {
+        try { this.guestWebRtcConn.send(clickPkt); } catch (_) {}
+      }
+      this._emitRoomPacket(this.activeRoom.id, 'HOST', clickPkt);
+    }
+  }
+
   sendMessage(text) {
     const clean = (text || '').trim();
     if (!clean || !this.activeRoom) return;
@@ -795,16 +848,17 @@ class ZoriiEngine {
         action: 'GUEST_CHAT',
         clientId: this.clientId,
         username: this.username,
+        color: this.userColor,
         text: clean,
         msgId
       });
     } else if (this.role === 'guest') {
-      // Optimistic local append so guest sees their own message with zero delay
       this.messages.push({
         id: msgId,
         type: 'user',
         clientId: this.clientId,
         author: this.username,
+        color: this.userColor,
         text: clean.slice(0, 500),
         time: this._formatTime(new Date())
       });
@@ -814,6 +868,7 @@ class ZoriiEngine {
         action: 'GUEST_CHAT',
         clientId: this.clientId,
         username: this.username,
+        color: this.userColor,
         text: clean,
         msgId
       };

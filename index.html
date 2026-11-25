@@ -6,7 +6,7 @@
   <title>Zorii</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="Styles/style.css" />
 </head>
 <body>
@@ -17,13 +17,13 @@
         <span class="brand-dot"></span>
         <span class="brand-name">Zorii</span>
       </div>
-      <div class="user-badge" id="user-badge" title="Change Username">
-        <span class="status-dot"></span>
+      <div class="user-badge" id="user-badge" title="Change Username & Color">
+        <span class="status-dot" id="current-user-dot"></span>
         <span id="current-username"></span>
       </div>
     </header>
 
-    <!-- 1. Auth View (Username only) -->
+    <!-- 1. Auth View (Username + Color) -->
     <section id="view-auth" class="view active">
       <div class="center-card auth-card">
         <div class="logo-large">
@@ -39,6 +39,7 @@
             required
             autofocus
           />
+          <div id="color-picker" class="color-picker"></div>
           <button type="submit" class="btn-primary">Enter</button>
         </form>
       </div>
@@ -129,7 +130,7 @@
       </div>
     </section>
 
-    <!-- 5. Room / Chat View -->
+    <!-- 5. Room / Chat + Live Clicker View -->
     <section id="view-room" class="view">
       <div class="room-layout">
         <!-- Main Chat Screen -->
@@ -168,8 +169,14 @@
           </form>
         </div>
 
-        <!-- Connected Users Sidebar -->
+        <!-- Right Sidebar: Live Shared Clicker + Connected Users -->
         <aside class="users-sidebar">
+          <div class="clicker-box">
+            <button type="button" id="btn-room-clicker" class="btn-clicker">
+              <span id="room-click-count" class="clicker-count">0</span>
+              <span class="clicker-sub">Room Clicks</span>
+            </button>
+          </div>
           <div class="users-header">
             <span id="users-count">0 / 0</span>
           </div>

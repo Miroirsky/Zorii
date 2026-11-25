@@ -1,7 +1,7 @@
 /**
  * Zorii V2 UI Controller
- * - Uses Event Delegation on `#rooms-list` so room clicks never get lost during live list updates.
- * - Renders authoritative room state (title, host computer badge, connected users, and chat history).
+ * - User colors (8 vibrant swatches on login, applied to user dots, username labels, and chat messages).
+ * - Live shared Room Clicker (synced in real time across all players in the room, and visible in the Join menu and immediately on joining).
  */
 document.addEventListener('DOMContentLoaded', () => {
   const cfg = window.ZORII_CONFIG;
@@ -10,6 +10,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const topbar = document.getElementById('topbar');
   const navHome = document.getElementById('nav-home');
   const userBadge = document.getElementById('user-badge');
+  const currentUserDot = document.getElementById('current-user-dot');
   const currentUsernameEl = document.getElementById('current-username');
 
   // Views
@@ -21,9 +22,10 @@ document.addEventListener('DOMContentLoaded', () => {
     room: document.getElementById('view-room')
   };
 
-  // Auth
+  // Auth + Color Picker
   const formAuth = document.getElementById('form-auth');
   const inputUsername = document.getElementById('input-username');
+  const colorPickerEl = document.getElementById('color-picker');
 
   // Main Menu
   const btnGoJoin = document.getElementById('btn-go-join');
@@ -42,7 +44,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const hostMaxInput = document.getElementById('host-max');
   const hostMaxVal = document.getElementById('host-max-val');
 
-  // Room / Chat
+  // Room / Chat + Live Clicker
   const roomTitleEl = document.getElementById('room-title');
   const roomDescEl = document.getElementById('room-desc');
   const roomHostTag = document.getElementById('room-host-tag');
@@ -52,6 +54,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const chatMessagesEl = document.getElementById('chat-messages');
   const formChat = document.getElementById('form-chat');
   const inputChat = document.getElementById('input-chat');
+  const btnRoomClicker = document.getElementById('btn-room-clicker');
+  const roomClickCountEl = document.getElementById('room-click-count');
   const usersCountEl = document.getElementById('users-count');
   const usersListEl = document.getElementById('users-list');
   const toastEl = document.getElementById('toast');
@@ -59,6 +63,27 @@ document.addEventListener('DOMContentLoaded', () => {
   let toastTimer = null;
   let lastRenderedSignature = '';
   let renderedMsgCount = 0;
+  let selectedColor = localStorage.getItem(cfg.STORAGE_COLOR_KEY) || cfg.USER_COLORS[0];
+
+  // Build color picker swatches
+  function initColorPicker() {
+    colorPickerEl.innerHTML = '';
+    cfg.USER_COLORS.forEach((hex) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'color-swatch' + (hex === selectedColor ? ' active' : '');
+      btn.style.backgroundColor = hex;
+      btn.style.color = hex;
+      btn.addEventListener('click', () => {
+        selectedColor = hex;
+        colorPickerEl.querySelectorAll('.color-swatch').forEach((el) => {
+          el.classList.toggle('active', el === btn);
+        });
+      });
+      colorPickerEl.appendChild(btn);
+    });
+  }
+  initColorPicker();
 
   function showToast(text) {
     toastEl.textContent = text;
@@ -76,6 +101,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (viewId === 'view-auth') {
       topbar.classList.add('hidden');
+      initColorPicker();
       setTimeout(() => inputUsername.focus(), 40);
     } else {
       topbar.classList.remove('hidden');
@@ -107,6 +133,7 @@ document.addEventListener('DOMContentLoaded', () => {
       roomDescEl.textContent = room.desc || '';
       roomCodeText.textContent = room.id;
       roomHostTag.textContent = isHost ? 'Hosted on your PC' : `Host: ${room.hostName}`;
+      roomClickCountEl.textContent = Number(room.clicks) || 0;
       showView('view-room');
     },
     onRoomState: ({ room, isHost, members, messages }) => {
@@ -115,7 +142,10 @@ document.addEventListener('DOMContentLoaded', () => {
       roomCodeText.textContent = room.id;
       roomHostTag.textContent = isHost ? 'Hosted on your PC' : `Host: ${room.hostName}`;
 
-      // Render connected members list
+      // Live shared clicker counter
+      roomClickCountEl.textContent = Number(room.clicks) || 0;
+
+      // Render connected members list with each user's custom color
       usersCountEl.textContent = `${members.length} / ${room.max}`;
       usersListEl.innerHTML = '';
 
@@ -126,11 +156,16 @@ document.addEventListener('DOMContentLoaded', () => {
         const left = document.createElement('div');
         left.className = 'user-row-left';
 
+        const userColor = m.color || cfg.USER_COLORS[0];
+
         const dot = document.createElement('span');
         dot.className = 'status-dot';
+        dot.style.backgroundColor = userColor;
+        dot.style.boxShadow = `0 0 8px ${userColor}`;
 
         const nameSpan = document.createElement('span');
         nameSpan.className = 'user-row-name';
+        nameSpan.style.color = userColor;
         nameSpan.textContent = m.name;
 
         left.appendChild(dot);
@@ -176,6 +211,8 @@ document.addEventListener('DOMContentLoaded', () => {
       chatMessagesEl.appendChild(sys);
     } else {
       const isSelf = msg.clientId === p2p.clientId;
+      const msgColor = msg.color || cfg.USER_COLORS[0];
+
       const wrap = document.createElement('div');
       wrap.className = 'msg' + (isSelf ? ' self' : '');
 
@@ -184,6 +221,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const author = document.createElement('span');
       author.className = 'msg-author';
+      author.style.color = msgColor;
       author.textContent = isSelf ? 'You' : msg.author;
 
       const time = document.createElement('span');
@@ -195,6 +233,12 @@ document.addEventListener('DOMContentLoaded', () => {
       const bubble = document.createElement('div');
       bubble.className = 'msg-bubble';
       bubble.textContent = msg.text;
+      if (isSelf) {
+        bubble.style.backgroundColor = msgColor;
+        bubble.style.borderColor = msgColor;
+      } else {
+        bubble.style.borderColor = msgColor + '55';
+      }
 
       wrap.appendChild(meta);
       wrap.appendChild(bubble);
@@ -204,7 +248,7 @@ document.addEventListener('DOMContentLoaded', () => {
     chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
   }
 
-  // Event Delegation on #rooms-list so clicking a room card or Join button ALWAYS fires immediately
+  // Event Delegation on #rooms-list
   function handleRoomListActivate(e) {
     const card = e.target.closest('[data-room-id]');
     if (!card) return;
@@ -236,12 +280,11 @@ document.addEventListener('DOMContentLoaded', () => {
       btnDirectJoin.classList.add('hidden');
     }
 
-    // Compute signature so we NEVER rebuild DOM if nothing visually changed
     const signature =
       query +
       '::' +
       filtered
-        .map((r) => `${r.id}:${r.name}:${r.desc}:${r.hostName}:${r.count}:${r.max}`)
+        .map((r) => `${r.id}:${r.name}:${r.desc}:${r.hostName}:${r.count}:${r.max}:${r.clicks || 0}`)
         .join('|');
 
     if (!force && signature === lastRenderedSignature) {
@@ -280,13 +323,13 @@ document.addEventListener('DOMContentLoaded', () => {
       host.className = 'room-item-host';
       host.textContent = r.hostName;
 
-      const codeBadge = document.createElement('span');
-      codeBadge.className = 'room-item-host';
-      codeBadge.textContent = `#${r.id}`;
+      const clicksBadge = document.createElement('span');
+      clicksBadge.className = 'room-item-host';
+      clicksBadge.textContent = `${Number(r.clicks) || 0} clicks`;
 
       top.appendChild(name);
       top.appendChild(host);
-      top.appendChild(codeBadge);
+      top.appendChild(clicksBadge);
       info.appendChild(top);
 
       if (r.desc) {
@@ -318,24 +361,28 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // 1. Account (Username only)
+  // 1. Account (Username + Color)
   const savedUser = localStorage.getItem(cfg.STORAGE_USER_KEY);
   if (savedUser && savedUser.trim()) {
-    loginWithUsername(savedUser.trim());
+    loginWithProfile(savedUser.trim(), selectedColor);
   }
 
-  function loginWithUsername(name) {
-    p2p.setUsername(name);
+  function loginWithProfile(name, color) {
+    p2p.setProfile(name, color);
     localStorage.setItem(cfg.STORAGE_USER_KEY, name);
+    localStorage.setItem(cfg.STORAGE_COLOR_KEY, color);
     currentUsernameEl.textContent = name;
-    showView('view-menu');
+    currentUsernameEl.style.color = color;
+    currentUserDot.style.backgroundColor = color;
+    currentUserDot.style.boxShadow = `0 0 8px ${color}`;
+    showView(p2p.activeRoom ? 'view-room' : 'view-menu');
   }
 
   formAuth.addEventListener('submit', (e) => {
     e.preventDefault();
     const val = inputUsername.value.trim();
     if (!val) return;
-    loginWithUsername(val);
+    loginWithProfile(val, selectedColor);
   });
 
   userBadge.addEventListener('click', () => {
@@ -345,7 +392,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
   navHome.addEventListener('click', () => {
     if (p2p.activeRoom) {
-      // If user clicks brand logo while in menu, return to active room or menu
       if (views.room.classList.contains('active')) {
         showView('view-menu');
       } else {
@@ -376,7 +422,6 @@ document.addEventListener('DOMContentLoaded', () => {
       e.preventDefault();
       const raw = inputSearch.value.trim();
       if (!raw) return;
-      // If a room matches the search query, join the first matching room; otherwise join by Room ID code
       const rooms = p2p.getRooms();
       const exactOrFirst = rooms.find(
         (r) =>
@@ -430,7 +475,11 @@ document.addEventListener('DOMContentLoaded', () => {
     hostDescInput.value = '';
   });
 
-  // 5. Room Chat & Controls
+  // 5. Room Chat & Live Shared Clicker
+  btnRoomClicker.addEventListener('click', () => {
+    p2p.sendClick();
+  });
+
   formChat.addEventListener('submit', (e) => {
     e.preventDefault();
     const text = inputChat.value.trim();
