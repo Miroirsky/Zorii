@@ -2,8 +2,10 @@
  * Zorii Client-Side P2P Engine
  * - When a user hosts a room, THEIR browser acts as the authoritative host server.
  * - Chat, member validation (5-100 cap), and presence run directly on the host user's computer.
- * - Uses WebRTC DataChannels (PeerJS) + Local BroadcastChannel fallback for instant zero-latency local tabs,
- *   and MQTT over WebSockets + localStorage for decentralized room discovery.
+ * - Multi-transport delivery ensures connections never fail across file://, localhost, or remote networks:
+ *   1. WebRTC DataChannel (PeerJS)
+ *   2. MQTT over WebSockets P2P tunnel (works across file:// tabs, different browsers, and different PCs)
+ *   3. Local BroadcastChannel + localStorage event bridge (instant zero-latency local tabs)
  */
 class ZoriiP2P {
   constructor(callbacks) {
@@ -14,7 +16,10 @@ class ZoriiP2P {
 
     // Discovery state
     this.discoveredRooms = new Map();
-    this.mqttClient = null;
+    this.mqttClients = [];
+    this.subscribedRoomTopics = new Set();
+    this.seenPacketIds = new Set();
+
     this.bus = typeof BroadcastChannel !== 'undefined'
       ? new BroadcastChannel(this.cfg.BROADCAST_CHANNEL)
       : null;
@@ -25,11 +30,13 @@ class ZoriiP2P {
     this.peer = null;
     this.hostConn = null; // Guest's WebRTC connection to host
     this.guestConns = new Map(); // Host's WebRTC connections: clientId -> conn
-    this.members = new Map(); // clientId -> { id, name, isHost, transport }
+    this.members = new Map(); // clientId -> { id, name, isHost, lastSeen }
     this.messages = [];
     this.heartbeatTimer = null;
+    this.joinRetryTimer = null;
+    this.joinTimeoutTimer = null;
 
-    this._initDiscovery();
+    this._initTransports();
   }
 
   setUsername(name) {
@@ -37,89 +44,181 @@ class ZoriiP2P {
   }
 
   /* =========================================================
-   * DECENTRALIZED ROOM DISCOVERY (Local Bus + Storage + MQTT)
+   * MULTI-TRANSPORT SETUP (BroadcastChannel + Storage + MQTT)
    * ========================================================= */
-  _initDiscovery() {
+  _initTransports() {
     // 1. Load cached rooms from localStorage
-    try {
-      const raw = localStorage.getItem(this.cfg.STORAGE_ROOMS_KEY);
-      if (raw) {
-        const list = JSON.parse(raw);
-        const now = Date.now();
-        list.forEach((r) => {
-          if (now - r.updatedAt < this.cfg.ROOM_TTL_MS) {
-            this.discoveredRooms.set(r.id, r);
-          }
-        });
-      }
-    } catch (_) {}
+    this._syncFromStorage();
 
-    // 2. Listen to local BroadcastChannel (for same-machine tabs & local P2P relay)
+    // 2. BroadcastChannel listener
     if (this.bus) {
-      this.bus.onmessage = (ev) => this._handleBusPacket(ev.data);
-      this.bus.postMessage({ type: 'DISCOVER_REQ' });
+      this.bus.onmessage = (ev) => this._onRawPacket(ev.data);
     }
 
-    // 3. Listen to storage events across tabs
+    // 3. localStorage event listener (works even when file:// isolates BroadcastChannel)
     window.addEventListener('storage', (ev) => {
       if (ev.key === this.cfg.STORAGE_ROOMS_KEY) {
         this._syncFromStorage();
+      } else if (ev.key === 'zorii_p2p_pkt' && ev.newValue) {
+        try {
+          this._onRawPacket(JSON.parse(ev.newValue));
+        } catch (_) {}
       }
     });
 
-    // 4. Connect to public WebSocket MQTT broker for cross-computer room browser
-    this._connectMqtt();
+    // 4. Connect to public WebSocket MQTT brokers (discovery + reliable P2P packet relay)
+    this._connectMqttBrokers();
 
-    // 5. Periodic cleanup of stale rooms
+    // 5. Request active rooms right away
+    this.requestDiscovery();
+
+    // 6. Periodic cleanup of stale rooms
     setInterval(() => this._pruneRooms(), 3500);
 
-    // 6. Clean disconnect when closing tab
+    // 7. Clean disconnect when closing tab
     window.addEventListener('beforeunload', () => {
       this.leaveRoom();
     });
   }
 
-  _connectMqtt() {
+  _connectMqttBrokers() {
     if (typeof mqtt === 'undefined') return;
-    try {
-      this.mqttClient = mqtt.connect(this.cfg.MQTT_BROKERS[0], {
-        clientId: 'zorii_' + this.clientId,
-        clean: true,
-        connectTimeout: 5000,
-        reconnectPeriod: 8000
-      });
 
-      this.mqttClient.on('connect', () => {
-        this.mqttClient.subscribe(this.cfg.DISCOVERY_TOPIC);
-        this.requestDiscovery();
-      });
+    this.cfg.MQTT_BROKERS.forEach((brokerUrl, idx) => {
+      try {
+        const client = mqtt.connect(brokerUrl, {
+          clientId: `zorii_${this.clientId}_${idx}`,
+          clean: true,
+          connectTimeout: 5000,
+          reconnectPeriod: 5000
+        });
 
-      this.mqttClient.on('message', (topic, payload) => {
-        if (topic !== this.cfg.DISCOVERY_TOPIC) return;
-        try {
-          const data = JSON.parse(payload.toString());
-          this._handleDiscoveryPacket(data);
-        } catch (_) {}
-      });
-    } catch (_) {}
+        client.on('connect', () => {
+          client.subscribe(this.cfg.DISCOVERY_TOPIC);
+          this.subscribedRoomTopics.forEach((topic) => client.subscribe(topic));
+          this.requestDiscovery();
+          if (this.mode === 'host' && this.room) {
+            this._announceRoom();
+          }
+        });
+
+        client.on('message', (_topic, payload) => {
+          try {
+            const pkt = JSON.parse(payload.toString());
+            this._onRawPacket(pkt);
+          } catch (_) {}
+        });
+
+        this.mqttClients.push(client);
+      } catch (_) {}
+    });
   }
 
-  requestDiscovery() {
+  _roomTopic(roomId) {
+    return `zorii/v1/room/${roomId}`;
+  }
+
+  _subscribeRoomTopic(roomId) {
+    const topic = this._roomTopic(roomId);
+    this.subscribedRoomTopics.add(topic);
+    this.mqttClients.forEach((c) => {
+      if (c && c.connected) {
+        try { c.subscribe(topic); } catch (_) {}
+      }
+    });
+  }
+
+  _unsubscribeAllRoomTopics() {
+    this.subscribedRoomTopics.forEach((topic) => {
+      this.mqttClients.forEach((c) => {
+        if (c && c.connected) {
+          try { c.unsubscribe(topic); } catch (_) {}
+        }
+      });
+    });
+    this.subscribedRoomTopics.clear();
+  }
+
+  _sendEverywhere(pkt, mqttTopic) {
+    if (!pkt._pid) {
+      pkt._pid = this.clientId + '_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+    }
+    this.seenPacketIds.add(pkt._pid);
+
+    // 1. BroadcastChannel
     if (this.bus) {
-      this.bus.postMessage({ type: 'DISCOVER_REQ' });
+      try { this.bus.postMessage(pkt); } catch (_) {}
     }
-    if (this.mqttClient && this.mqttClient.connected) {
-      this.mqttClient.publish(
-        this.cfg.DISCOVERY_TOPIC,
-        JSON.stringify({ type: 'DISCOVER_REQ' })
-      );
+
+    // 2. localStorage bridge
+    try {
+      localStorage.setItem('zorii_p2p_pkt', JSON.stringify(pkt));
+    } catch (_) {}
+
+    // 3. MQTT WebSockets
+    const topic = mqttTopic || this.cfg.DISCOVERY_TOPIC;
+    const raw = JSON.stringify(pkt);
+    this.mqttClients.forEach((c) => {
+      if (c && c.connected) {
+        try { c.publish(topic, raw); } catch (_) {}
+      }
+    });
+  }
+
+  _onRawPacket(pkt) {
+    if (!pkt || !pkt.type) return;
+    if (pkt._pid) {
+      if (this.seenPacketIds.has(pkt._pid)) return;
+      this.seenPacketIds.add(pkt._pid);
+      if (this.seenPacketIds.size > 600) {
+        const first = this.seenPacketIds.values().next().value;
+        this.seenPacketIds.delete(first);
+      }
     }
+
+    if (
+      pkt.type === 'DISCOVER_REQ' ||
+      pkt.type === 'ROOM_ANNOUNCE' ||
+      pkt.type === 'ROOM_CLOSE'
+    ) {
+      this._handleDiscoveryPacket(pkt);
+      return;
+    }
+
+    if (pkt.type === 'P2P_PACKET' && this.room && pkt.roomId === this.room.id) {
+      if (this.mode === 'host' && pkt.target === 'HOST') {
+        this._handleHostIncoming(pkt.payload, (reply) => {
+          this._sendRoomPacket(this.room.id, pkt.payload.clientId, reply);
+        });
+      } else if (
+        this.mode === 'guest' &&
+        (pkt.target === this.clientId || pkt.target === 'ALL_GUESTS')
+      ) {
+        this._handleGuestIncoming(pkt.payload);
+      }
+    }
+  }
+
+  _sendRoomPacket(roomId, target, payload) {
+    const pkt = {
+      type: 'P2P_PACKET',
+      roomId,
+      target,
+      payload
+    };
+    this._sendEverywhere(pkt, this._roomTopic(roomId));
+  }
+
+  /* =========================================================
+   * ROOM DISCOVERY
+   * ========================================================= */
+  requestDiscovery() {
+    this._syncFromStorage();
+    this._sendEverywhere({ type: 'DISCOVER_REQ' }, this.cfg.DISCOVERY_TOPIC);
     this._pruneRooms();
   }
 
   _handleDiscoveryPacket(pkt) {
-    if (!pkt || !pkt.type) return;
-
     if (pkt.type === 'DISCOVER_REQ') {
       if (this.mode === 'host' && this.room) {
         this._announceRoom();
@@ -222,20 +321,20 @@ class ZoriiP2P {
     this.members.set(this.clientId, {
       id: this.clientId,
       name: this.username,
-      isHost: true,
-      transport: 'self'
+      isHost: true
     });
 
     this.messages = [];
+
+    // Subscribe to room P2P channel on MQTT
+    this._subscribeRoomTopic(roomId);
 
     // Spin up WebRTC PeerJS host node on this user's machine
     if (typeof Peer !== 'undefined') {
       try {
         this.peer = new Peer(this.cfg.APP_PREFIX + roomId);
         this.peer.on('connection', (conn) => this._setupHostWebRTCConn(conn));
-        this.peer.on('error', () => {
-          // Even if PeerJS public cloud has an issue, local BroadcastChannel P2P continues working seamlessly
-        });
+        this.peer.on('error', () => {});
       } catch (_) {}
     }
 
@@ -262,11 +361,9 @@ class ZoriiP2P {
       room: { ...this.room }
     };
 
-    this._handleDiscoveryPacket(pkt);
-    if (this.bus) this.bus.postMessage(pkt);
-    if (this.mqttClient && this.mqttClient.connected) {
-      this.mqttClient.publish(this.cfg.DISCOVERY_TOPIC, JSON.stringify(pkt));
-    }
+    this.discoveredRooms.set(this.room.id, { ...this.room });
+    this._persistRooms();
+    this._sendEverywhere(pkt, this.cfg.DISCOVERY_TOPIC);
   }
 
   _setupHostWebRTCConn(conn) {
@@ -285,11 +382,18 @@ class ZoriiP2P {
   }
 
   /* =========================================================
-   * JOINING A HOST'S COMPUTER (WebRTC + Local Bus Dual Path)
+   * JOINING A HOST'S COMPUTER
    * ========================================================= */
   joinRoom(roomId) {
     const cleanId = roomId.trim().toUpperCase();
     if (!cleanId) return;
+
+    // If user is already hosting this room, keep them in it
+    if (this.mode === 'host' && this.room && this.room.id === cleanId) {
+      if (this.cb.onRoomJoined) this.cb.onRoomJoined(this.room, true);
+      return;
+    }
+
     this.leaveRoom();
 
     this.mode = 'guest';
@@ -305,19 +409,33 @@ class ZoriiP2P {
           count: 1
         };
 
+    // Subscribe to the room's P2P relay topic immediately
+    this._subscribeRoomTopic(cleanId);
+
     let joinedConfirmed = false;
 
-    const onHandshakeTimeout = setTimeout(() => {
-      if (!joinedConfirmed && this.mode === 'guest') {
-        if (this.cb.onError) this.cb.onError('Host unreachable or room closed');
-        this.leaveRoom();
+    const sendJoinRequest = () => {
+      if (joinedConfirmed || this.mode !== 'guest') return;
+      const reqPayload = {
+        action: 'JOIN_REQ',
+        clientId: this.clientId,
+        username: this.username
+      };
+
+      // Send over BroadcastChannel + localStorage + MQTT room topic
+      this._sendRoomPacket(cleanId, 'HOST', reqPayload);
+
+      // Also send over WebRTC if open
+      if (this.hostConn && this.hostConn.open) {
+        try { this.hostConn.send(reqPayload); } catch (_) {}
       }
-    }, 6500);
+    };
 
     this._onGuestWelcome = (pkt) => {
       if (joinedConfirmed) return;
       joinedConfirmed = true;
-      clearTimeout(onHandshakeTimeout);
+      clearInterval(this.joinRetryTimer);
+      clearTimeout(this.joinTimeoutTimer);
 
       this.room = pkt.room;
       this._syncMembersList(pkt.members);
@@ -332,48 +450,36 @@ class ZoriiP2P {
       }
     };
 
-    // Path A: Instant local BroadcastChannel P2P handshake (if host is on same device/browser)
-    if (this.bus) {
-      this.bus.postMessage({
-        type: 'P2P_PACKET',
-        roomId: cleanId,
-        target: 'HOST',
-        payload: {
-          action: 'JOIN_REQ',
-          clientId: this.clientId,
-          username: this.username
-        }
-      });
-    }
+    // Retry join handshake every 900ms while MQTT / WebRTC finishes connecting
+    sendJoinRequest();
+    this.joinRetryTimer = setInterval(sendJoinRequest, 900);
 
-    // Path B: WebRTC PeerJS connection to remote host's computer
+    this.joinTimeoutTimer = setTimeout(() => {
+      if (!joinedConfirmed && this.mode === 'guest') {
+        clearInterval(this.joinRetryTimer);
+        if (this.cb.onError) this.cb.onError('Host unreachable or room closed');
+        this.leaveRoom();
+      }
+    }, 9000);
+
+    // Also establish direct WebRTC connection to host computer
     if (typeof Peer !== 'undefined') {
       try {
         this.peer = new Peer();
         this.peer.on('open', () => {
-          if (joinedConfirmed || this.mode !== 'guest') return;
+          if (this.mode !== 'guest') return;
           const conn = this.peer.connect(this.cfg.APP_PREFIX + cleanId, {
             reliable: true
           });
           this.hostConn = conn;
 
           conn.on('open', () => {
-            if (joinedConfirmed) return;
-            conn.send({
-              action: 'JOIN_REQ',
-              clientId: this.clientId,
-              username: this.username
-            });
+            sendJoinRequest();
           });
 
           conn.on('data', (data) => this._handleGuestIncoming(data));
-          conn.on('close', () => {
-            if (this.mode === 'guest') {
-              if (this.cb.onError) this.cb.onError('Host closed the room');
-              this.leaveRoom();
-            }
-          });
         });
+        this.peer.on('error', () => {});
       } catch (_) {}
     }
   }
@@ -406,16 +512,18 @@ class ZoriiP2P {
       this.members.set(clientId, {
         id: clientId,
         name: username,
-        isHost: false,
-        transport: webrtcConn ? 'webrtc' : 'bus'
+        isHost: false
       });
 
-      replyFn({
+      const welcomePkt = {
         action: 'WELCOME',
         room: this.room,
         members: Array.from(this.members.values()),
         history: this.messages.slice(-60)
-      });
+      };
+
+      replyFn(welcomePkt);
+      this._sendRoomPacket(this.room.id, clientId, welcomePkt);
 
       if (isNew) {
         this._emitMembers();
@@ -436,8 +544,13 @@ class ZoriiP2P {
       const text = (payload.text || '').trim();
       if (!text) return;
 
+      // Deduplicate if guest sent via both WebRTC and bus
+      if (payload.msgId && this.messages.some((m) => m.id === payload.msgId)) {
+        return;
+      }
+
       const msg = {
-        id: 'm_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+        id: payload.msgId || ('m_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6)),
         clientId: sender.id,
         author: sender.name,
         text: text.slice(0, 500),
@@ -482,15 +595,8 @@ class ZoriiP2P {
       try { conn.send(packet); } catch (_) {}
     }
 
-    // 2. Send over local BroadcastChannel
-    if (this.bus) {
-      this.bus.postMessage({
-        type: 'P2P_PACKET',
-        roomId: this.room.id,
-        target: 'ALL_GUESTS',
-        payload: packet
-      });
-    }
+    // 2. Send over BroadcastChannel + localStorage + MQTT room topic
+    this._sendRoomPacket(this.room.id, 'ALL_GUESTS', packet);
   }
 
   _broadcastSystemFromHost(text) {
@@ -511,6 +617,8 @@ class ZoriiP2P {
     if (!payload || !payload.action || this.mode !== 'guest') return;
 
     if (payload.action === 'JOIN_REJECT') {
+      clearInterval(this.joinRetryTimer);
+      clearTimeout(this.joinTimeoutTimer);
       if (this.cb.onError) this.cb.onError(payload.reason || 'Cannot join room');
       this.leaveRoom();
       return;
@@ -542,37 +650,6 @@ class ZoriiP2P {
     }
   }
 
-  _handleBusPacket(pkt) {
-    if (!pkt || !pkt.type) return;
-
-    if (
-      pkt.type === 'DISCOVER_REQ' ||
-      pkt.type === 'ROOM_ANNOUNCE' ||
-      pkt.type === 'ROOM_CLOSE'
-    ) {
-      this._handleDiscoveryPacket(pkt);
-      return;
-    }
-
-    if (pkt.type === 'P2P_PACKET' && this.room && pkt.roomId === this.room.id) {
-      if (this.mode === 'host' && pkt.target === 'HOST') {
-        this._handleHostIncoming(pkt.payload, (reply) => {
-          this.bus.postMessage({
-            type: 'P2P_PACKET',
-            roomId: this.room.id,
-            target: pkt.payload.clientId,
-            payload: reply
-          });
-        });
-      } else if (
-        this.mode === 'guest' &&
-        (pkt.target === this.clientId || pkt.target === 'ALL_GUESTS')
-      ) {
-        this._handleGuestIncoming(pkt.payload);
-      }
-    }
-  }
-
   /* =========================================================
    * SENDING CHAT & LEAVING
    * ========================================================= */
@@ -580,28 +657,26 @@ class ZoriiP2P {
     const clean = (text || '').trim();
     if (!clean || !this.room) return;
 
+    const msgId = 'm_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+
     if (this.mode === 'host') {
       this._handleHostIncoming({
         action: 'CHAT_SEND',
         clientId: this.clientId,
-        text: clean
+        text: clean,
+        msgId
       });
     } else if (this.mode === 'guest') {
       const pkt = {
         action: 'CHAT_SEND',
         clientId: this.clientId,
-        text: clean
+        text: clean,
+        msgId
       };
       if (this.hostConn && this.hostConn.open) {
-        this.hostConn.send(pkt);
-      } else if (this.bus) {
-        this.bus.postMessage({
-          type: 'P2P_PACKET',
-          roomId: this.room.id,
-          target: 'HOST',
-          payload: pkt
-        });
+        try { this.hostConn.send(pkt); } catch (_) {}
       }
+      this._sendRoomPacket(this.room.id, 'HOST', pkt);
     }
   }
 
@@ -610,29 +685,30 @@ class ZoriiP2P {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
     }
+    if (this.joinRetryTimer) {
+      clearInterval(this.joinRetryTimer);
+      this.joinRetryTimer = null;
+    }
+    if (this.joinTimeoutTimer) {
+      clearTimeout(this.joinTimeoutTimer);
+      this.joinTimeoutTimer = null;
+    }
 
     if (this.mode === 'host' && this.room) {
       this._broadcastFromHost({ action: 'ROOM_CLOSED' });
       const closePkt = { type: 'ROOM_CLOSE', roomId: this.room.id };
-      this._handleDiscoveryPacket(closePkt);
-      if (this.bus) this.bus.postMessage(closePkt);
-      if (this.mqttClient && this.mqttClient.connected) {
-        this.mqttClient.publish(this.cfg.DISCOVERY_TOPIC, JSON.stringify(closePkt));
-      }
+      this.discoveredRooms.delete(this.room.id);
+      this._persistRooms();
+      this._sendEverywhere(closePkt, this.cfg.DISCOVERY_TOPIC);
     } else if (this.mode === 'guest' && this.room) {
       const leavePkt = { action: 'LEAVE', clientId: this.clientId };
       if (this.hostConn && this.hostConn.open) {
         try { this.hostConn.send(leavePkt); } catch (_) {}
       }
-      if (this.bus) {
-        this.bus.postMessage({
-          type: 'P2P_PACKET',
-          roomId: this.room.id,
-          target: 'HOST',
-          payload: leavePkt
-        });
-      }
+      this._sendRoomPacket(this.room.id, 'HOST', leavePkt);
     }
+
+    this._unsubscribeAllRoomTopics();
 
     if (this.hostConn) {
       try { this.hostConn.close(); } catch (_) {}

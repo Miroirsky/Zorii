@@ -286,9 +286,6 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   navHome.addEventListener('click', () => {
-    if (p2p.room) {
-      p2p.leaveRoom();
-    }
     showView('view-menu');
   });
 
