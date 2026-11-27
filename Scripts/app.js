@@ -228,6 +228,7 @@ document.addEventListener('DOMContentLoaded', () => {
       renderSavedRoomsList();
       setTimeout(() => hostNameInput.focus(), 40);
     } else if (viewId === 'view-room') {
+      scrollChatToBottom();
       if (!p2p.isAnonymous) {
         setTimeout(() => inputChat.focus(), 40);
       }
@@ -627,6 +628,14 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
+  function scrollChatToBottom() {
+    if (!chatMessagesEl) return;
+    chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+    requestAnimationFrame(() => {
+      chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+    });
+  }
+
   function appendMessageNode(msg) {
     if (msg.type === 'system') {
       const sys = document.createElement('div');
@@ -669,7 +678,7 @@ document.addEventListener('DOMContentLoaded', () => {
       chatMessagesEl.appendChild(wrap);
     }
 
-    chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+    scrollChatToBottom();
   }
 
   // Event Delegation on #rooms-list
