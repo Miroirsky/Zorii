@@ -374,10 +374,13 @@
                 placeholder="Message..."
                 maxlength="500"
               />
-              <button type="submit" class="btn-send" title="Send">
+              <button type="submit" id="btn-send-chat" class="btn-send" title="Send (0.5s cooldown)">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
               </button>
             </form>
+            <div id="chat-timeout-notice" class="chat-timeout-notice hidden">
+              ⏳ You are timed out (<span id="chat-timeout-countdown">0s</span> remaining)
+            </div>
             <div id="chat-readonly-notice" class="chat-readonly-notice hidden">
               Mode spectateur (anonyme) — lecture seule, envoi de messages désactivé
             </div>
@@ -439,11 +442,11 @@
                     </div>
                   </div>
 
-                  <!-- Clicker Upgrades (Host Only Purchase) -->
+                  <!-- Clicker Upgrades (Owner & Admins Purchase) -->
                   <div class="clicker-upgrade-card">
                     <div class="clicker-upgrade-top">
                       <span class="clicker-upgrade-heading">Upgrades</span>
-                      <span id="clicker-upgrade-role-tag" class="clicker-upgrade-role-tag">Host Only</span>
+                      <span id="clicker-upgrade-role-tag" class="clicker-upgrade-role-tag">Owner & Admins</span>
                     </div>
                     <div class="clicker-upgrade-row">
                       <div class="clicker-upgrade-info">

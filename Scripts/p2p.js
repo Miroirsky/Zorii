@@ -36,14 +36,20 @@ class ZoriiEngine {
 
     // Active room state
     this.role = null; // 'host' | 'guest' | null
-    this.activeRoom = null; // { id, name, desc, max, hostId, hostName, count, spectatorCount, clicks, cooldownUpgradeLevel, level, xp, currentLevelXp, xpNeeded, updatedAt }
+    this.activeRoom = null; // { id, name, desc, max, hostId, hostName, count, spectatorCount, clicks, cooldownUpgradeLevel, adminIds, bannedIds, level, xp, currentLevelXp, xpNeeded, updatedAt }
     this.isRoomSaved = false; // true once host saves room (or loads from saved rooms) -> auto-saves on close
-    this.members = new Map(); // clientId -> { id, name, color, isHost, clicks, joinedAt }
+    this.members = new Map(); // clientId -> { id, name, color, isHost, isAdmin, timeoutUntil, clicks, joinedAt }
+    this.adminIds = new Set(); // clientIds appointed as Admin by Owner
+    this.bannedIds = new Set(); // clientIds banned by Owner
+    this.timeouts = new Map(); // clientId -> timeoutUntil epoch ms
     this.playerClicks = new Map(); // clientId -> number (host-authoritative session clicks)
-    this.lastPlayerClickAt = new Map(); // clientId -> timestamp ms (host cooldown enforcement)
+    this.lastPlayerClickAt = new Map(); // clientId -> timestamp ms (host click cooldown enforcement)
+    this.lastPlayerChatAt = new Map(); // clientId -> timestamp ms (host 0.5s chat cooldown enforcement)
     this.lastLocalClickAt = 0;
+    this.lastLocalChatAt = 0;
     this.lastAppliedSnapshotAt = 0;
     this.processedClickIds = new Set(); // clickId deduplication on host
+    this.processedAdminActionIds = new Set(); // admin actionId deduplication on host
     this.spectators = new Map(); // clientId -> lastSeenMs (invisible anonymous spectators)
     this.messages = [];
 
@@ -235,6 +241,54 @@ class ZoriiEngine {
       const arr = Array.from(this.rooms.values());
       localStorage.setItem(this.cfg.STORAGE_ROOMS_KEY, JSON.stringify(arr));
     } catch (_) {}
+  }
+
+  isOwner(uid = this.clientId) {
+    if (!this.activeRoom || !uid) return false;
+    return (this.role === 'host' && uid === this.clientId) || uid === this.activeRoom.hostId;
+  }
+
+  isAdmin(uid = this.clientId) {
+    if (!this.activeRoom || !uid) return false;
+    if (this.adminIds.has(uid)) return true;
+    const m = this.members.get(uid);
+    if (m && m.isAdmin) return true;
+    if (Array.isArray(this.activeRoom.adminIds) && this.activeRoom.adminIds.includes(uid)) {
+      return true;
+    }
+    return false;
+  }
+
+  isOwnerOrAdmin(uid = this.clientId) {
+    return this.isOwner(uid) || this.isAdmin(uid);
+  }
+
+  getUserTimeoutRemainingMs(uid = this.clientId) {
+    if (!this.activeRoom || !uid) return 0;
+    const m = this.members.get(uid);
+    const until = Math.max(
+      Number(this.timeouts.get(uid)) || 0,
+      Number(m && m.timeoutUntil) || 0
+    );
+    return Math.max(0, until - Date.now());
+  }
+
+  getRemainingChatCooldownMs() {
+    if (!this.activeRoom || !this.lastLocalChatAt) return 0;
+    return Math.max(0, 500 - (Date.now() - this.lastLocalChatAt));
+  }
+
+  canDeleteMessage(msg) {
+    if (!msg || msg.type === 'system' || !this.activeRoom || this.isAnonymous) return false;
+    if (this.isOwner(this.clientId)) return true;
+    if (this.isAdmin(this.clientId)) {
+      // Owner and admins can delete messages (admins can delete non-admin/non-owner messages or their own)
+      return (
+        msg.clientId === this.clientId ||
+        (!this.isOwner(msg.clientId) && !this.isAdmin(msg.clientId))
+      );
+    }
+    return false;
   }
 
   getCooldownUpgradeInfo(levelOverride) {
@@ -453,6 +507,8 @@ class ZoriiEngine {
             max: Math.min(this.cfg.MAX_MEMBERS, Math.max(this.cfg.MIN_MEMBERS, Number(r.max) || 25)),
             clicks,
             cooldownUpgradeLevel,
+            adminIds: Array.isArray(r.adminIds) ? r.adminIds.filter(Boolean) : [],
+            bannedIds: Array.isArray(r.bannedIds) ? r.bannedIds.filter(Boolean) : [],
             level: lvlInfo.level,
             xp: lvlInfo.totalXp,
             currentLevelXp: lvlInfo.currentLevelXp,
@@ -495,6 +551,8 @@ class ZoriiEngine {
       max: this.activeRoom.max,
       clicks,
       cooldownUpgradeLevel,
+      adminIds: Array.from(this.adminIds),
+      bannedIds: Array.from(this.bannedIds),
       level: lvlInfo.level,
       xp: lvlInfo.totalXp,
       currentLevelXp: lvlInfo.currentLevelXp,
@@ -522,7 +580,7 @@ class ZoriiEngine {
   /* =========================================================
    * HOSTING A ROOM (YOUR COMPUTER IS THE SERVER)
    * ========================================================= */
-  hostRoom({ id, name, desc, max, xp, clicks, cooldownUpgradeLevel }) {
+  hostRoom({ id, name, desc, max, xp, clicks, cooldownUpgradeLevel, adminIds, bannedIds }) {
     if (this.isAnonymous || !this.isEmailVerified) {
       if (this.cb.onError) {
         this.cb.onError('Compte avec e-mail vérifié requis pour héberger une room');
@@ -541,6 +599,10 @@ class ZoriiEngine {
     const initialXp = Math.max(Math.floor(initialClicks / 100), Math.max(0, Math.floor(Number(xp) || 0)));
     const lvlInfo = this.computeRoomLevel(initialXp);
 
+    this.adminIds = new Set(Array.isArray(adminIds) ? adminIds.filter(Boolean) : []);
+    this.bannedIds = new Set(Array.isArray(bannedIds) ? bannedIds.filter(Boolean) : []);
+    this.timeouts.clear();
+
     this.role = 'host';
     this.isRoomSaved = this.getSavedRooms().some((r) => r.id === roomId);
     this.activeRoom = {
@@ -555,6 +617,8 @@ class ZoriiEngine {
       spectatorCount: 0,
       clicks: initialClicks,
       cooldownUpgradeLevel: initialUpgradeLvl,
+      adminIds: Array.from(this.adminIds),
+      bannedIds: Array.from(this.bannedIds),
       level: lvlInfo.level,
       xp: lvlInfo.totalXp,
       currentLevelXp: lvlInfo.currentLevelXp,
@@ -565,9 +629,12 @@ class ZoriiEngine {
     this.members.clear();
     this.playerClicks.clear();
     this.lastPlayerClickAt.clear();
+    this.lastPlayerChatAt.clear();
     this.lastLocalClickAt = 0;
+    this.lastLocalChatAt = 0;
     this.lastAppliedSnapshotAt = 0;
     this.processedClickIds.clear();
+    this.processedAdminActionIds.clear();
     this.spectators.clear();
     this.playerClicks.set(this.clientId, 0);
     this.members.set(this.clientId, {
@@ -575,7 +642,9 @@ class ZoriiEngine {
       name: this.username,
       color: this.userColor,
       isHost: true,
+      isAdmin: false,
       isVerified: true,
+      timeoutUntil: 0,
       clicks: 0,
       joinedAt: Date.now()
     });
@@ -675,6 +744,7 @@ class ZoriiEngine {
   }
 
   _hostBuildSnapshot() {
+    const now = Date.now();
     this.activeRoom.count = this.members.size;
     this.activeRoom.spectatorCount = this.spectators.size;
     this.activeRoom.clicks = Math.max(0, Math.floor(Number(this.activeRoom.clicks) || 0));
@@ -682,18 +752,31 @@ class ZoriiEngine {
       10,
       Math.max(0, Math.floor(Number(this.activeRoom.cooldownUpgradeLevel) || 0))
     );
+    this.activeRoom.adminIds = Array.from(this.adminIds);
+    this.activeRoom.bannedIds = Array.from(this.bannedIds);
     const lvlInfo = this.computeRoomLevel(this.activeRoom.xp);
     this.activeRoom.level = lvlInfo.level;
     this.activeRoom.xp = lvlInfo.totalXp;
     this.activeRoom.currentLevelXp = lvlInfo.currentLevelXp;
     this.activeRoom.xpNeeded = lvlInfo.xpNeeded;
-    this.activeRoom.updatedAt = Date.now();
+    this.activeRoom.updatedAt = now;
+
+    this.members.forEach((m) => {
+      m.isAdmin = !m.isHost && this.adminIds.has(m.id);
+      const tUntil = Number(this.timeouts.get(m.id)) || 0;
+      if (tUntil > now) {
+        m.timeoutUntil = tUntil;
+      } else {
+        m.timeoutUntil = 0;
+        this.timeouts.delete(m.id);
+      }
+    });
 
     return {
       room: this.activeRoom,
       members: Array.from(this.members.values()),
       messages: this.messages.slice(-80),
-      updatedAt: Date.now()
+      updatedAt: now
     };
   }
 
@@ -784,6 +867,19 @@ class ZoriiEngine {
       const { clientId, username, color } = payload;
       if (!clientId || !username) return;
 
+      if (this.bannedIds.has(clientId)) {
+        const rejectPkt = {
+          action: 'HOST_REJECT',
+          targetId: clientId,
+          reason: 'You are banned from this room'
+        };
+        if (webrtcConn && webrtcConn.open) {
+          try { webrtcConn.send(rejectPkt); } catch (_) {}
+        }
+        this._emitRoomPacket(this.activeRoom.id, clientId, rejectPkt);
+        return;
+      }
+
       if (this.spectators.has(clientId)) {
         this.spectators.delete(clientId);
         this.hostWebRtcSpectatorConns.delete(clientId);
@@ -814,12 +910,17 @@ class ZoriiEngine {
       );
       this.playerClicks.set(clientId, prevPlayerClicks);
 
+      const tUntil = Number(this.timeouts.get(clientId)) || 0;
+      const isHostMember = clientId === this.clientId;
+
       this.members.set(clientId, {
         id: clientId,
         name: username,
         color: color || (existing && existing.color) || this.cfg.USER_COLORS[0],
-        isHost: clientId === this.clientId,
-        isVerified: clientId === this.clientId ? true : Boolean(payload.isVerified),
+        isHost: isHostMember,
+        isAdmin: !isHostMember && this.adminIds.has(clientId),
+        isVerified: isHostMember ? true : Boolean(payload.isVerified),
+        timeoutUntil: tUntil > Date.now() ? tUntil : 0,
         clicks: prevPlayerClicks,
         joinedAt: existing ? existing.joinedAt : Date.now()
       });
@@ -887,7 +988,7 @@ class ZoriiEngine {
       return;
     }
 
-    // 3. Guest sends chat message (blocked for anonymous spectators & non-members)
+    // 3. Guest sends chat message (blocked for anonymous spectators, timed-out users, & 0.5s chat cooldown)
     if (payload.action === 'GUEST_CHAT') {
       const { clientId, color, text, msgId, isAnonymous } = payload;
       if (isAnonymous || !clientId || this.spectators.has(clientId) || !this.members.has(clientId)) {
@@ -898,6 +999,26 @@ class ZoriiEngine {
 
       if (msgId && this.messages.some((m) => m.id === msgId)) {
         return;
+      }
+
+      // Check active timeout
+      const now = Date.now();
+      const timeoutUntil = Number(this.timeouts.get(clientId)) || 0;
+      if (timeoutUntil > now) {
+        return;
+      }
+
+      // Enforce 0.5s (500ms) chat cooldown on host server
+      const prevChatAt = Number(this.lastPlayerChatAt.get(clientId)) || 0;
+      if (prevChatAt > 0) {
+        const earliestChat = prevChatAt + 500;
+        const jitterTol = clientId === this.clientId ? 0 : 220;
+        if (now < earliestChat - jitterTol) {
+          return;
+        }
+        this.lastPlayerChatAt.set(clientId, Math.max(now, earliestChat));
+      } else {
+        this.lastPlayerChatAt.set(clientId, now);
       }
 
       const sender = this.members.get(clientId);
@@ -918,7 +1039,186 @@ class ZoriiEngine {
       return;
     }
 
-    // 3. Guest or spectator leaves
+    // 4. Administration & Upgrade Actions (Host-Authoritative Permission Verification)
+    if (
+      payload.action === 'ADMIN_SET_ROLE' ||
+      payload.action === 'ADMIN_KICK' ||
+      payload.action === 'ADMIN_BAN' ||
+      payload.action === 'ADMIN_TIMEOUT' ||
+      payload.action === 'ADMIN_DELETE_MSG' ||
+      payload.action === 'ADMIN_BUY_UPGRADE'
+    ) {
+      if (payload.actionId) {
+        if (this.processedAdminActionIds.has(payload.actionId)) return;
+        this.processedAdminActionIds.add(payload.actionId);
+        if (this.processedAdminActionIds.size > 1000) {
+          const oldest = this.processedAdminActionIds.values().next().value;
+          this.processedAdminActionIds.delete(oldest);
+        }
+      }
+
+      const actorId = payload.actorId;
+      const actor = this.members.get(actorId);
+      if (!actorId || !actor) return;
+
+      const actorIsOwner = actorId === this.clientId;
+      const actorIsAdmin = !actorIsOwner && this.adminIds.has(actorId);
+      if (!actorIsOwner && !actorIsAdmin) return;
+
+      // 4a. Owner defines/removes Admin
+      if (payload.action === 'ADMIN_SET_ROLE') {
+        if (!actorIsOwner) return;
+        const target = this.members.get(payload.targetId);
+        if (!target || target.isHost) return;
+
+        if (payload.isAdmin) {
+          this.adminIds.add(target.id);
+          target.isAdmin = true;
+          this.timeouts.delete(target.id);
+          target.timeoutUntil = 0;
+          this.messages.push({
+            id: 'sys_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+            type: 'system',
+            text: `${target.name} is now a room Admin`
+          });
+        } else {
+          this.adminIds.delete(target.id);
+          target.isAdmin = false;
+          this.messages.push({
+            id: 'sys_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+            type: 'system',
+            text: `${target.name} is no longer an Admin`
+          });
+        }
+        this._hostCommitState();
+        return;
+      }
+
+      // 4b. Owner or Admin kicks a non-admin user
+      if (payload.action === 'ADMIN_KICK') {
+        const target = this.members.get(payload.targetId);
+        if (!target || target.isHost || this.adminIds.has(target.id)) return;
+
+        const kickPkt = {
+          action: 'HOST_KICK',
+          targetId: target.id,
+          reason: `You were kicked from the room by ${actor.name}`
+        };
+        const tConn = this.hostWebRtcConns.get(target.id);
+        if (tConn && tConn.open) {
+          try { tConn.send(kickPkt); } catch (_) {}
+        }
+        this._emitRoomPacket(this.activeRoom.id, target.id, kickPkt);
+
+        this.members.delete(target.id);
+        this.hostWebRtcConns.delete(target.id);
+
+        this.messages.push({
+          id: 'sys_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+          type: 'system',
+          text: `${target.name} was kicked by ${actor.name}`
+        });
+        this._hostCommitState();
+        return;
+      }
+
+      // 4c. Owner bans a user
+      if (payload.action === 'ADMIN_BAN') {
+        if (!actorIsOwner) return;
+        const target = this.members.get(payload.targetId);
+        if (!target || target.isHost) return;
+
+        this.bannedIds.add(target.id);
+        this.adminIds.delete(target.id);
+
+        const banPkt = {
+          action: 'HOST_BAN',
+          targetId: target.id,
+          reason: `You have been banned from this room by ${actor.name}`
+        };
+        const tConn = this.hostWebRtcConns.get(target.id);
+        if (tConn && tConn.open) {
+          try { tConn.send(banPkt); } catch (_) {}
+        }
+        this._emitRoomPacket(this.activeRoom.id, target.id, banPkt);
+
+        this.members.delete(target.id);
+        this.hostWebRtcConns.delete(target.id);
+
+        this.messages.push({
+          id: 'sys_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+          type: 'system',
+          text: `${target.name} was banned by ${actor.name}`
+        });
+        this._hostCommitState();
+        return;
+      }
+
+      // 4d. Owner or Admin times out a non-admin user
+      if (payload.action === 'ADMIN_TIMEOUT') {
+        const target = this.members.get(payload.targetId);
+        if (!target || target.isHost || this.adminIds.has(target.id)) return;
+
+        const durationMs = Math.max(0, Math.floor(Number(payload.durationMs) || 0));
+        if (durationMs > 0) {
+          const until = Date.now() + durationMs;
+          this.timeouts.set(target.id, until);
+          target.timeoutUntil = until;
+          const sec = Math.round(durationMs / 1000);
+          this.messages.push({
+            id: 'sys_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+            type: 'system',
+            text: `${target.name} was timed out for ${sec}s by ${actor.name}`
+          });
+        } else {
+          this.timeouts.delete(target.id);
+          target.timeoutUntil = 0;
+          this.messages.push({
+            id: 'sys_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+            type: 'system',
+            text: `${target.name}'s timeout was removed by ${actor.name}`
+          });
+        }
+        this._hostCommitState();
+        return;
+      }
+
+      // 4e. Owner or Admin deletes a chat message
+      if (payload.action === 'ADMIN_DELETE_MSG') {
+        const msgIndex = this.messages.findIndex((m) => m.id === payload.msgId);
+        if (msgIndex === -1) return;
+        const targetMsg = this.messages[msgIndex];
+        if (!targetMsg || targetMsg.type === 'system') return;
+
+        // Admins can only delete non-admin/non-owner messages (or their own)
+        if (!actorIsOwner) {
+          const msgAuthorIsOwner = targetMsg.clientId === this.clientId;
+          const msgAuthorIsAdmin = this.adminIds.has(targetMsg.clientId);
+          if ((msgAuthorIsOwner || msgAuthorIsAdmin) && targetMsg.clientId !== actorId) {
+            return;
+          }
+        }
+
+        this.messages.splice(msgIndex, 1);
+        this._hostCommitState();
+        return;
+      }
+
+      // 4f. Owner or Admin buys Clicker Cooldown Upgrade
+      if (payload.action === 'ADMIN_BUY_UPGRADE') {
+        const info = this.getCooldownUpgradeInfo();
+        if (info.isMaxed) return;
+        const currentClicks = Math.max(0, Math.floor(Number(this.activeRoom.clicks) || 0));
+        if (currentClicks < info.nextCost) return;
+
+        this.activeRoom.clicks = currentClicks - info.nextCost;
+        this.activeRoom.cooldownUpgradeLevel = info.level + 1;
+        this._hostCommitState();
+        return;
+      }
+    }
+
+    // 5. Guest or spectator leaves
     if (payload.action === 'GUEST_LEAVE') {
       if (payload.isAnonymous || this.spectators.has(payload.clientId)) {
         this._hostRemoveSpectator(payload.clientId);
@@ -1183,10 +1483,14 @@ class ZoriiEngine {
   _guestProcessHostPacket(payload) {
     if (!payload || !payload.action || this.role !== 'guest' || !this.activeRoom) return;
 
-    if (payload.action === 'HOST_REJECT') {
+    if (
+      payload.action === 'HOST_REJECT' ||
+      payload.action === 'HOST_KICK' ||
+      payload.action === 'HOST_BAN'
+    ) {
       if (payload.targetId && payload.targetId !== this.clientId) return;
       if (this.cb.onError) {
-        this.cb.onError(payload.reason || 'Cannot join room');
+        this.cb.onError(payload.reason || 'Removed from room');
       }
       this.leaveRoom();
       return;
@@ -1221,6 +1525,19 @@ class ZoriiEngine {
         10,
         Math.max(0, Math.floor(Number(snap.room.cooldownUpgradeLevel) || 0))
       );
+      const adminIds = Array.isArray(snap.room.adminIds) ? snap.room.adminIds.filter(Boolean) : [];
+      const bannedIds = Array.isArray(snap.room.bannedIds) ? snap.room.bannedIds.filter(Boolean) : [];
+      this.adminIds = new Set(adminIds);
+      this.bannedIds = new Set(bannedIds);
+
+      if (this.bannedIds.has(this.clientId)) {
+        if (this.cb.onError) {
+          this.cb.onError('You have been banned from this room');
+        }
+        this.leaveRoom();
+        return;
+      }
+
       const xp = Math.max(Math.floor(clicks / 100), Number(snap.room.xp) || 0);
       const lvlInfo = this.computeRoomLevel(xp);
       this.activeRoom = {
@@ -1228,6 +1545,8 @@ class ZoriiEngine {
         spectatorCount: Math.max(0, Number(snap.room.spectatorCount) || 0),
         clicks,
         cooldownUpgradeLevel,
+        adminIds,
+        bannedIds,
         level: lvlInfo.level,
         xp: lvlInfo.totalXp,
         currentLevelXp: lvlInfo.currentLevelXp,
@@ -1236,19 +1555,28 @@ class ZoriiEngine {
     }
     if (Array.isArray(snap.members)) {
       this.members.clear();
-      snap.members.forEach((m) =>
+      this.timeouts.clear();
+      snap.members.forEach((m) => {
+        const tUntil = Math.max(0, Math.floor(Number(m.timeoutUntil) || 0));
+        if (tUntil > Date.now()) {
+          this.timeouts.set(m.id, tUntil);
+        }
         this.members.set(m.id, {
           ...m,
+          isAdmin: Boolean(m.isAdmin || this.adminIds.has(m.id)),
+          timeoutUntil: tUntil,
           clicks: Math.max(0, Math.floor(Number(m.clicks) || 0))
-        })
-      );
+        });
+      });
       if (!this.isAnonymous && !this.members.has(this.clientId)) {
         this.members.set(this.clientId, {
           id: this.clientId,
           name: this.username,
           color: this.userColor,
           isHost: false,
+          isAdmin: this.adminIds.has(this.clientId),
           isVerified: this.isEmailVerified,
+          timeoutUntil: 0,
           clicks: 0
         });
       }
@@ -1334,9 +1662,90 @@ class ZoriiEngine {
     return true;
   }
 
+  _sendActionToHost(payload) {
+    if (!this.activeRoom || !payload) return false;
+    const pkt = {
+      ...payload,
+      actionId:
+        payload.actionId ||
+        'act_' + this.clientId + '_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7)
+    };
+    if (this.role === 'host') {
+      this._hostProcessGuestAction(pkt, null);
+    } else if (this.role === 'guest') {
+      if (this.guestWebRtcConn && this.guestWebRtcConn.open) {
+        try {
+          this.guestWebRtcConn.send(pkt);
+        } catch (_) {}
+      }
+      this._emitRoomPacket(this.activeRoom.id, 'HOST', pkt);
+    }
+    return true;
+  }
+
+  setAdmin(targetId, makeAdmin) {
+    if (!this.isOwner(this.clientId) || !targetId) return false;
+    return this._sendActionToHost({
+      action: 'ADMIN_SET_ROLE',
+      actorId: this.clientId,
+      targetId,
+      isAdmin: Boolean(makeAdmin)
+    });
+  }
+
+  kickUser(targetId) {
+    if (!this.isOwnerOrAdmin(this.clientId) || !targetId) return false;
+    const target = this.members.get(targetId);
+    if (!target || target.isHost || target.isAdmin || this.isAdmin(targetId)) return false;
+    return this._sendActionToHost({
+      action: 'ADMIN_KICK',
+      actorId: this.clientId,
+      targetId
+    });
+  }
+
+  banUser(targetId) {
+    if (!this.isOwner(this.clientId) || !targetId) return false;
+    const target = this.members.get(targetId);
+    if (!target || target.isHost) return false;
+    return this._sendActionToHost({
+      action: 'ADMIN_BAN',
+      actorId: this.clientId,
+      targetId
+    });
+  }
+
+  timeoutUser(targetId, durationMs = 60000) {
+    if (!this.isOwnerOrAdmin(this.clientId) || !targetId) return false;
+    const target = this.members.get(targetId);
+    if (!target || target.isHost || target.isAdmin || this.isAdmin(targetId)) return false;
+    return this._sendActionToHost({
+      action: 'ADMIN_TIMEOUT',
+      actorId: this.clientId,
+      targetId,
+      durationMs: Math.max(0, Math.floor(Number(durationMs) || 0))
+    });
+  }
+
+  deleteMessage(msgId) {
+    if (!this.isOwnerOrAdmin(this.clientId) || !msgId) return false;
+    const msg = this.messages.find((m) => m.id === msgId);
+    if (msg && !this.canDeleteMessage(msg)) return false;
+
+    if (this.role === 'guest') {
+      this.messages = this.messages.filter((m) => m.id !== msgId);
+      this._notifyUIState();
+    }
+    return this._sendActionToHost({
+      action: 'ADMIN_DELETE_MSG',
+      actorId: this.clientId,
+      msgId
+    });
+  }
+
   buyCooldownUpgrade() {
-    if (this.role !== 'host' || !this.activeRoom) {
-      return { ok: false, reason: 'Only the host can buy upgrades' };
+    if (!this.activeRoom || !this.isOwnerOrAdmin(this.clientId)) {
+      return { ok: false, reason: 'Only the Owner and Admins can buy upgrades' };
     }
     const info = this.getCooldownUpgradeInfo();
     if (info.isMaxed) {
@@ -1347,9 +1756,16 @@ class ZoriiEngine {
       return { ok: false, reason: `Need ${info.nextCost.toLocaleString()} total clicks` };
     }
 
-    this.activeRoom.clicks = currentClicks - info.nextCost;
-    this.activeRoom.cooldownUpgradeLevel = info.level + 1;
-    this._hostCommitState();
+    if (this.role === 'guest') {
+      this.activeRoom.clicks = currentClicks - info.nextCost;
+      this.activeRoom.cooldownUpgradeLevel = info.level + 1;
+      this._notifyUIState();
+    }
+
+    this._sendActionToHost({
+      action: 'ADMIN_BUY_UPGRADE',
+      actorId: this.clientId
+    });
 
     return {
       ok: true,
@@ -1363,7 +1779,17 @@ class ZoriiEngine {
     const clean = (text || '').trim();
     if (!clean || !this.activeRoom) return false;
 
-    const msgId = 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+    if (this.getUserTimeoutRemainingMs(this.clientId) > 0) {
+      return false;
+    }
+
+    const now = Date.now();
+    if (this.lastLocalChatAt > 0 && now - this.lastLocalChatAt < 500) {
+      return false;
+    }
+    this.lastLocalChatAt = now;
+
+    const msgId = 'msg_' + now + '_' + Math.random().toString(36).slice(2, 7);
 
     if (this.role === 'host') {
       this._hostProcessGuestAction({
@@ -1468,11 +1894,17 @@ class ZoriiEngine {
     this.activeRoom = null;
     this.isRoomSaved = false;
     this.members.clear();
+    this.adminIds.clear();
+    this.bannedIds.clear();
+    this.timeouts.clear();
     this.playerClicks.clear();
     this.lastPlayerClickAt.clear();
+    this.lastPlayerChatAt.clear();
     this.lastLocalClickAt = 0;
+    this.lastLocalChatAt = 0;
     this.lastAppliedSnapshotAt = 0;
     this.processedClickIds.clear();
+    this.processedAdminActionIds.clear();
     this.spectators.clear();
     this.messages = [];
   }

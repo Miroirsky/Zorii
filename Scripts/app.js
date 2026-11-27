@@ -111,6 +111,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const chatMessagesEl = document.getElementById('chat-messages');
   const formChat = document.getElementById('form-chat');
   const inputChat = document.getElementById('input-chat');
+  const btnSendChat = document.getElementById('btn-send-chat');
+  const chatTimeoutNotice = document.getElementById('chat-timeout-notice');
+  const chatTimeoutCountdown = document.getElementById('chat-timeout-countdown');
   const chatReadonlyNotice = document.getElementById('chat-readonly-notice');
   const roomLevelValEl = document.getElementById('room-level-val');
   const roomXpFillEl = document.getElementById('room-xp-fill');
@@ -143,6 +146,9 @@ document.addEventListener('DOMContentLoaded', () => {
   let activeEventId = null;
   let currentEventScaleRatio = 0.35;
   let cooldownRafId = null;
+  let openModMenuUserId = null;
+  let renderedMsgSignature = '';
+  let timeoutTickTimer = null;
 
   let toastTimer = null;
   let lastRenderedSignature = '';
@@ -296,12 +302,33 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function syncRoomSpectatorUI() {
-    if (formChat && chatReadonlyNotice) {
-      formChat.classList.toggle('hidden', p2p.isAnonymous);
+    const timeoutRemMs = p2p.getUserTimeoutRemainingMs();
+    const isTimedOut = !p2p.isAnonymous && timeoutRemMs > 0;
+
+    if (formChat) {
+      formChat.classList.toggle('hidden', p2p.isAnonymous || isTimedOut);
+    }
+    if (chatReadonlyNotice) {
       chatReadonlyNotice.classList.toggle('hidden', !p2p.isAnonymous);
+    }
+    if (chatTimeoutNotice) {
+      chatTimeoutNotice.classList.toggle('hidden', !isTimedOut);
+      if (isTimedOut && chatTimeoutCountdown) {
+        chatTimeoutCountdown.textContent = `${Math.ceil(timeoutRemMs / 1000)}s`;
+      }
     }
     if (btnRoomClicker) {
       btnRoomClicker.disabled = p2p.isAnonymous;
+    }
+
+    clearTimeout(timeoutTickTimer);
+    if (isTimedOut) {
+      timeoutTickTimer = setTimeout(() => {
+        syncRoomSpectatorUI();
+        if (views.room.classList.contains('active') && p2p.activeRoom) {
+          renderRoomMembersList(latestMembers);
+        }
+      }, 500);
     }
   }
 
@@ -429,7 +456,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const totalClicks = Math.max(0, Math.floor(Number(room && room.clicks) || 0));
     const cycleClicks = totalClicks % 100;
     const upInfo = p2p.getCooldownUpgradeInfo(room && room.cooldownUpgradeLevel);
-    const isHost = p2p.role === 'host';
+    const isOwner = p2p.isOwner();
+    const isAdmin = p2p.isAdmin();
+    const canBuyUpgradeRole = isOwner || isAdmin;
 
     if (clickerTotalVal) {
       clickerTotalVal.textContent = totalClicks.toLocaleString();
@@ -456,13 +485,17 @@ document.addEventListener('DOMContentLoaded', () => {
       upgradeCdCost.textContent = upInfo.isMaxed ? 'MAX' : formatCompactClicks(upInfo.nextCost);
     }
     if (clickerUpgradeRoleTag) {
-      clickerUpgradeRoleTag.textContent = isHost ? 'Host Controls' : 'Host Only';
+      clickerUpgradeRoleTag.textContent = isOwner
+        ? 'Owner Controls'
+        : isAdmin
+        ? 'Admin Controls'
+        : 'Owner & Admins';
     }
     if (btnBuyCdUpgrade) {
-      const canBuy = isHost && !upInfo.isMaxed && totalClicks >= upInfo.nextCost;
+      const canBuy = canBuyUpgradeRole && !upInfo.isMaxed && totalClicks >= upInfo.nextCost;
       btnBuyCdUpgrade.disabled = !canBuy;
-      btnBuyCdUpgrade.title = !isHost
-        ? 'Only the host can buy upgrades'
+      btnBuyCdUpgrade.title = !canBuyUpgradeRole
+        ? 'Only the Owner and Admins can buy upgrades'
         : upInfo.isMaxed
         ? 'Cooldown upgrade maxed'
         : `Buy for ${upInfo.nextCost.toLocaleString()} total clicks (5x cost per level)`;
@@ -527,10 +560,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
       if (m.isHost) {
         const tag = document.createElement('span');
-        tag.className = 'user-tag';
-        tag.textContent = 'Host';
+        tag.className = 'user-tag tag-owner';
+        tag.textContent = 'Owner';
         right.appendChild(tag);
-      } else if (m.id === p2p.clientId) {
+      } else if (m.isAdmin) {
+        const tag = document.createElement('span');
+        tag.className = 'user-tag tag-admin';
+        tag.textContent = 'Admin';
+        right.appendChild(tag);
+      }
+      if (m.id === p2p.clientId && !m.isHost) {
         const tag = document.createElement('span');
         tag.className = 'user-tag';
         tag.textContent = 'You';
@@ -777,9 +816,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function renderRoomMembersList(members) {
     usersListEl.innerHTML = '';
+    const meIsOwner = p2p.isOwner();
+    const meIsAdmin = p2p.isAdmin();
+
     members.forEach((m) => {
       const li = document.createElement('li');
       li.className = 'user-row';
+
+      const mainRow = document.createElement('div');
+      mainRow.className = 'user-row-main';
 
       const left = document.createElement('div');
       left.className = 'user-row-left';
@@ -798,17 +843,32 @@ document.addEventListener('DOMContentLoaded', () => {
 
       left.appendChild(dot);
       left.appendChild(nameSpan);
-      li.appendChild(left);
+      mainRow.appendChild(left);
 
       const right = document.createElement('div');
       right.className = 'user-row-right';
 
+      const targetTimeoutRem = p2p.getUserTimeoutRemainingMs(m.id);
+      if (targetTimeoutRem > 0) {
+        const tBadge = document.createElement('span');
+        tBadge.className = 'user-tag tag-timeout';
+        tBadge.title = 'Timed out from chat';
+        tBadge.textContent = `⏳ ${Math.ceil(targetTimeoutRem / 1000)}s`;
+        right.appendChild(tBadge);
+      }
+
       if (m.isHost) {
         const tag = document.createElement('span');
-        tag.className = 'user-tag';
-        tag.textContent = 'Host';
+        tag.className = 'user-tag tag-owner';
+        tag.textContent = 'Owner';
         right.appendChild(tag);
-      } else if (m.id === p2p.clientId) {
+      } else if (m.isAdmin) {
+        const tag = document.createElement('span');
+        tag.className = 'user-tag tag-admin';
+        tag.textContent = 'Admin';
+        right.appendChild(tag);
+      }
+      if (m.id === p2p.clientId && !m.isHost) {
         const tag = document.createElement('span');
         tag.className = 'user-tag';
         tag.textContent = 'You';
@@ -834,7 +894,96 @@ document.addEventListener('DOMContentLoaded', () => {
         right.appendChild(fBtn);
       }
 
-      li.appendChild(right);
+      // Check if current user can moderate this member
+      const targetIsNonAdmin = !m.isHost && !m.isAdmin;
+      const canModerateTarget =
+        !p2p.isAnonymous &&
+        m.id &&
+        m.id !== p2p.clientId &&
+        !m.isHost &&
+        (meIsOwner || (meIsAdmin && targetIsNonAdmin));
+
+      if (canModerateTarget) {
+        const modToggle = document.createElement('button');
+        modToggle.type = 'button';
+        modToggle.className = 'btn-mod-toggle' + (openModMenuUserId === m.id ? ' active' : '');
+        modToggle.title = 'Administration Actions';
+        modToggle.textContent = '⚙';
+        modToggle.addEventListener('click', () => {
+          openModMenuUserId = openModMenuUserId === m.id ? null : m.id;
+          renderRoomMembersList(latestMembers);
+        });
+        right.appendChild(modToggle);
+      }
+
+      mainRow.appendChild(right);
+      li.appendChild(mainRow);
+
+      if (canModerateTarget && openModMenuUserId === m.id) {
+        const modBar = document.createElement('div');
+        modBar.className = 'user-mod-actions';
+
+        // Owner can promote/demote Admins
+        if (meIsOwner) {
+          const adminBtn = document.createElement('button');
+          adminBtn.type = 'button';
+          adminBtn.className = 'btn-mod-action mod-admin';
+          adminBtn.textContent = m.isAdmin ? '- Admin' : '+ Admin';
+          adminBtn.title = m.isAdmin ? 'Remove Admin role' : 'Make room Admin';
+          adminBtn.addEventListener('click', () => {
+            p2p.setAdmin(m.id, !m.isAdmin);
+            showToast(m.isAdmin ? `Removed Admin from ${m.name}` : `${m.name} promoted to Admin`);
+          });
+          modBar.appendChild(adminBtn);
+        }
+
+        // Owner & Admins can Timeout and Kick non-admin users
+        if (targetIsNonAdmin) {
+          const timeoutBtn = document.createElement('button');
+          timeoutBtn.type = 'button';
+          timeoutBtn.className = 'btn-mod-action mod-warn';
+          const isCurrentlyTimedOut = targetTimeoutRem > 0;
+          timeoutBtn.textContent = isCurrentlyTimedOut ? 'Untimeout' : 'Timeout 60s';
+          timeoutBtn.title = isCurrentlyTimedOut ? 'Remove chat timeout' : 'Timeout user from chat for 60s';
+          timeoutBtn.addEventListener('click', () => {
+            p2p.timeoutUser(m.id, isCurrentlyTimedOut ? 0 : 60000);
+            showToast(
+              isCurrentlyTimedOut ? `Removed timeout for ${m.name}` : `Timed out ${m.name} for 60s`
+            );
+          });
+          modBar.appendChild(timeoutBtn);
+
+          const kickBtn = document.createElement('button');
+          kickBtn.type = 'button';
+          kickBtn.className = 'btn-mod-action mod-danger';
+          kickBtn.textContent = 'Kick';
+          kickBtn.title = 'Kick user from room';
+          kickBtn.addEventListener('click', () => {
+            openModMenuUserId = null;
+            p2p.kickUser(m.id);
+            showToast(`Kicked ${m.name}`);
+          });
+          modBar.appendChild(kickBtn);
+        }
+
+        // Owner can Ban users
+        if (meIsOwner) {
+          const banBtn = document.createElement('button');
+          banBtn.type = 'button';
+          banBtn.className = 'btn-mod-action mod-danger';
+          banBtn.textContent = 'Ban';
+          banBtn.title = 'Ban user from room';
+          banBtn.addEventListener('click', () => {
+            openModMenuUserId = null;
+            p2p.banUser(m.id);
+            showToast(`Banned ${m.name}`);
+          });
+          modBar.appendChild(banBtn);
+        }
+
+        li.appendChild(modBar);
+      }
+
       usersListEl.appendChild(li);
     });
   }
@@ -849,6 +998,8 @@ document.addEventListener('DOMContentLoaded', () => {
     },
     onEnterRoom: (room, isHost) => {
       renderedMsgCount = 0;
+      renderedMsgSignature = '';
+      openModMenuUserId = null;
       chatMessagesEl.innerHTML = '';
       roomTitleEl.textContent = room.name;
       roomDescEl.textContent = room.desc || '';
@@ -902,8 +1053,18 @@ document.addEventListener('DOMContentLoaded', () => {
       renderRoomMembersList(latestMembers);
       syncUsersSidebarToggleUI();
 
-      // Render messages efficiently
-      if (messages.length < renderedMsgCount) {
+      // Render messages efficiently (re-render if a message was deleted or moderation privileges changed)
+      const roleKey = `${p2p.isOwner() ? 'O' : p2p.isAdmin() ? 'A' : 'M'}:${(room.adminIds || []).join(',')}`;
+      const nextMsgSig = roleKey + '::' + messages.map((m) => m.id).join('|');
+      const prevIdsPart = renderedMsgSignature.split('::')[1] || '';
+      const nextIdsPart = messages.map((m) => m.id).join('|');
+      const prevRolePart = renderedMsgSignature.split('::')[0] || '';
+
+      if (
+        prevRolePart !== roleKey ||
+        messages.length < renderedMsgCount ||
+        (prevIdsPart && !nextIdsPart.startsWith(prevIdsPart))
+      ) {
         chatMessagesEl.innerHTML = '';
         renderedMsgCount = 0;
       }
@@ -911,6 +1072,7 @@ document.addEventListener('DOMContentLoaded', () => {
         appendMessageNode(messages[i]);
       }
       renderedMsgCount = messages.length;
+      renderedMsgSignature = nextMsgSig;
     },
     onError: (errText) => {
       showToast(errText);
@@ -952,6 +1114,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
       meta.appendChild(author);
       meta.appendChild(time);
+
+      if (p2p.canDeleteMessage(msg)) {
+        const delBtn = document.createElement('button');
+        delBtn.type = 'button';
+        delBtn.className = 'btn-msg-delete';
+        delBtn.title = 'Delete message';
+        delBtn.textContent = '🗑';
+        delBtn.addEventListener('click', () => {
+          p2p.deleteMessage(msg.id);
+        });
+        meta.appendChild(delBtn);
+      }
 
       const bubble = document.createElement('div');
       bubble.className = 'msg-bubble';
@@ -1694,7 +1868,9 @@ document.addEventListener('DOMContentLoaded', () => {
           max: sr.max,
           xp: sr.xp,
           clicks: sr.clicks,
-          cooldownUpgradeLevel: sr.cooldownUpgradeLevel
+          cooldownUpgradeLevel: sr.cooldownUpgradeLevel,
+          adminIds: sr.adminIds,
+          bannedIds: sr.bannedIds
         });
       });
 
@@ -1851,8 +2027,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   if (btnBuyCdUpgrade) {
     btnBuyCdUpgrade.addEventListener('click', () => {
-      if (p2p.role !== 'host') {
-        showToast('Only the host can buy upgrades');
+      if (!p2p.isOwnerOrAdmin()) {
+        showToast('Only the Owner and Admins can buy upgrades');
         return;
       }
       const res = p2p.buyCooldownUpgrade();
@@ -1883,8 +2059,27 @@ document.addEventListener('DOMContentLoaded', () => {
     e.preventDefault();
     const text = inputChat.value.trim();
     if (!text) return;
-    p2p.sendMessage(text);
+    const timeoutRem = p2p.getUserTimeoutRemainingMs();
+    if (timeoutRem > 0) {
+      showToast(`You are timed out (${Math.ceil(timeoutRem / 1000)}s remaining)`);
+      syncRoomSpectatorUI();
+      return;
+    }
+    const chatCdRem = p2p.getRemainingChatCooldownMs();
+    if (chatCdRem > 0) {
+      return;
+    }
+    const sent = p2p.sendMessage(text);
+    if (!sent) return;
     inputChat.value = '';
+    if (btnSendChat) {
+      btnSendChat.classList.add('on-cooldown');
+      btnSendChat.disabled = true;
+      setTimeout(() => {
+        btnSendChat.classList.remove('on-cooldown');
+        btnSendChat.disabled = false;
+      }, 500);
+    }
   });
 
   btnCopyCode.addEventListener('click', () => {
