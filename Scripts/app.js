@@ -9,23 +9,74 @@ document.addEventListener('DOMContentLoaded', () => {
   // Topbar
   const topbar = document.getElementById('topbar');
   const navHome = document.getElementById('nav-home');
+  const btnToggleFollowSidebar = document.getElementById('btn-toggle-follow-sidebar');
+  const topbarFollowersPill = document.getElementById('topbar-followers-pill');
+  const topbarFollowersCount = document.getElementById('topbar-followers-count');
   const userBadge = document.getElementById('user-badge');
   const currentUserDot = document.getElementById('current-user-dot');
   const currentUsernameEl = document.getElementById('current-username');
 
+  // Discord-style Follow Sidebar
+  const followSidebar = document.getElementById('follow-sidebar');
+  const sidebarFollowersCount = document.getElementById('sidebar-followers-count');
+  const followSearchInput = document.getElementById('follow-search-input');
+  const followRtdbNotice = document.getElementById('follow-rtdb-notice');
+  const followSearchResultsEl = document.getElementById('follow-search-results');
+  const followingListEl = document.getElementById('following-list');
+
   // Views
   const views = {
     auth: document.getElementById('view-auth'),
+    profile: document.getElementById('view-profile'),
     menu: document.getElementById('view-menu'),
     join: document.getElementById('view-join'),
     host: document.getElementById('view-host'),
     room: document.getElementById('view-room')
   };
 
-  // Auth + Color Picker
-  const formAuth = document.getElementById('form-auth');
-  const inputUsername = document.getElementById('input-username');
+  // Auth Views & Controls (Firebase)
+  const authErrorEl = document.getElementById('auth-error');
+  const authFormsWrap = document.getElementById('auth-forms-wrap');
+  const authVerifyPanel = document.getElementById('auth-verify-panel');
+  const tabLogin = document.getElementById('tab-login');
+  const tabRegister = document.getElementById('tab-register');
+  const formLogin = document.getElementById('form-login');
+  const loginNoEmailToggle = document.getElementById('login-no-email-toggle');
+  const loginEmailInput = document.getElementById('login-email');
+  const loginPasswordInput = document.getElementById('login-password');
+  const btnForgotPassword = document.getElementById('btn-forgot-password');
+  const btnLoginSubmit = document.getElementById('btn-login-submit');
+  const formRegister = document.getElementById('form-register');
+  const regUsernameInput = document.getElementById('reg-username');
+  const regNoEmailToggle = document.getElementById('reg-no-email-toggle');
+  const regEmailInput = document.getElementById('reg-email');
+  const regPasswordInput = document.getElementById('reg-password');
+  const btnRegisterSubmit = document.getElementById('btn-register-submit');
   const colorPickerEl = document.getElementById('color-picker');
+  const btnAnonLogin = document.getElementById('btn-anon-login');
+  const verifyEmailLabel = document.getElementById('verify-email-label');
+  const btnCheckVerified = document.getElementById('btn-check-verified');
+  const btnResendVerify = document.getElementById('btn-resend-verify');
+  const btnVerifyLogout = document.getElementById('btn-verify-logout');
+
+  // Profile View
+  const btnProfileBack = document.getElementById('btn-profile-back');
+  const profileVerifiedBox = document.getElementById('profile-verified-box');
+  const profileAnonBox = document.getElementById('profile-anon-box');
+  const profileEmailText = document.getElementById('profile-email-text');
+  const profileFollowersCount = document.getElementById('profile-followers-count');
+  const profileVerifiedBadge = document.getElementById('profile-verified-badge');
+  const formProfile = document.getElementById('form-profile');
+  const profileUsernameInput = document.getElementById('profile-username');
+  const profileColorPickerEl = document.getElementById('profile-color-picker');
+  const passwordFeedbackEl = document.getElementById('password-feedback');
+  const formChangePassword = document.getElementById('form-change-password');
+  const currentPasswordInput = document.getElementById('current-password');
+  const newPasswordInput = document.getElementById('new-password');
+  const confirmNewPasswordInput = document.getElementById('confirm-new-password');
+  const btnChangePassword = document.getElementById('btn-change-password');
+  const btnPasswordEmailPerm = document.getElementById('btn-password-email-perm');
+  const btnLogout = document.getElementById('btn-logout');
 
   // Main Menu
   const btnGoJoin = document.getElementById('btn-go-join');
@@ -57,10 +108,12 @@ document.addEventListener('DOMContentLoaded', () => {
   const chatMessagesEl = document.getElementById('chat-messages');
   const formChat = document.getElementById('form-chat');
   const inputChat = document.getElementById('input-chat');
+  const chatReadonlyNotice = document.getElementById('chat-readonly-notice');
   const roomLevelValEl = document.getElementById('room-level-val');
   const roomXpFillEl = document.getElementById('room-xp-fill');
   const roomXpTextEl = document.getElementById('room-xp-text');
   const usersCountEl = document.getElementById('users-count');
+  const spectatorsCountEl = document.getElementById('spectators-count');
   const usersListEl = document.getElementById('users-list');
   const toastEl = document.getElementById('toast');
 
@@ -68,10 +121,28 @@ document.addEventListener('DOMContentLoaded', () => {
   let lastRenderedSignature = '';
   let renderedMsgCount = 0;
   let selectedColor = localStorage.getItem(cfg.STORAGE_COLOR_KEY) || cfg.USER_COLORS[0];
+  let currentFirebaseUser = null;
+  let pendingRegisterPseudo = '';
+  let isAuthenticatedSession = false;
+
+  // Initialize Firebase
+  let firebaseAuth = null;
+  if (typeof firebase !== 'undefined' && cfg.FIREBASE_CONFIG) {
+    if (!firebase.apps || firebase.apps.length === 0) {
+      firebase.initializeApp(cfg.FIREBASE_CONFIG);
+    }
+    firebaseAuth = firebase.auth();
+    try {
+      if (typeof firebase.analytics === 'function') {
+        firebase.analytics();
+      }
+    } catch (_) {}
+  }
 
   // Build color picker swatches
-  function initColorPicker() {
-    colorPickerEl.innerHTML = '';
+  function renderColorSwatches(containerEl) {
+    if (!containerEl) return;
+    containerEl.innerHTML = '';
     cfg.USER_COLORS.forEach((hex) => {
       const btn = document.createElement('button');
       btn.type = 'button';
@@ -80,14 +151,14 @@ document.addEventListener('DOMContentLoaded', () => {
       btn.style.color = hex;
       btn.addEventListener('click', () => {
         selectedColor = hex;
-        colorPickerEl.querySelectorAll('.color-swatch').forEach((el) => {
-          el.classList.toggle('active', el === btn);
-        });
+        renderColorSwatches(colorPickerEl);
+        renderColorSwatches(profileColorPickerEl);
       });
-      colorPickerEl.appendChild(btn);
+      containerEl.appendChild(btn);
     });
   }
-  initColorPicker();
+  renderColorSwatches(colorPickerEl);
+  renderColorSwatches(profileColorPickerEl);
 
   function showToast(text) {
     toastEl.textContent = text;
@@ -95,18 +166,55 @@ document.addEventListener('DOMContentLoaded', () => {
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => {
       toastEl.classList.add('hidden');
-    }, 2600);
+    }, 2800);
+  }
+
+  function showAuthError(msg) {
+    if (!authErrorEl) return;
+    if (!msg) {
+      authErrorEl.textContent = '';
+      authErrorEl.classList.add('hidden');
+    } else {
+      authErrorEl.textContent = msg;
+      authErrorEl.classList.remove('hidden');
+    }
+  }
+
+  function formatFirebaseError(err) {
+    const code = (err && err.code) || '';
+    switch (code) {
+      case 'auth/email-already-in-use':
+        return 'Cette adresse e-mail est déjà utilisée.';
+      case 'auth/invalid-email':
+        return 'Adresse e-mail invalide.';
+      case 'auth/weak-password':
+        return 'Mot de passe trop faible (6 caractères minimum).';
+      case 'auth/user-not-found':
+      case 'auth/wrong-password':
+      case 'auth/invalid-credential':
+        return 'E-mail ou mot de passe incorrect.';
+      case 'auth/too-many-requests':
+        return 'Trop de tentatives. Patientez quelques instants.';
+      case 'auth/operation-not-allowed':
+        return 'Cette méthode de connexion n’est pas activée dans la console Firebase.';
+      case 'auth/network-request-failed':
+        return 'Erreur réseau. Vérifiez votre connexion internet.';
+      default:
+        return (err && err.message) || 'Une erreur est survenue.';
+    }
   }
 
   function showView(viewId) {
+    if (!isAuthenticatedSession && viewId !== 'view-auth') {
+      viewId = 'view-auth';
+    }
     Object.values(views).forEach((v) => v.classList.remove('active'));
     const target = document.getElementById(viewId);
     if (target) target.classList.add('active');
 
     if (viewId === 'view-auth') {
       topbar.classList.add('hidden');
-      initColorPicker();
-      setTimeout(() => inputUsername.focus(), 40);
+      renderColorSwatches(colorPickerEl);
     } else {
       topbar.classList.remove('hidden');
     }
@@ -120,7 +228,14 @@ document.addEventListener('DOMContentLoaded', () => {
       renderSavedRoomsList();
       setTimeout(() => hostNameInput.focus(), 40);
     } else if (viewId === 'view-room') {
-      setTimeout(() => inputChat.focus(), 40);
+      if (!p2p.isAnonymous) {
+        setTimeout(() => inputChat.focus(), 40);
+      }
+    } else if (viewId === 'view-profile') {
+      renderColorSwatches(profileColorPickerEl);
+    }
+    if (typeof social !== 'undefined') {
+      renderSocialUI();
     }
   }
 
@@ -137,12 +252,311 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  function syncRoomSpectatorUI() {
+    if (formChat && chatReadonlyNotice) {
+      formChat.classList.toggle('hidden', p2p.isAnonymous);
+      chatReadonlyNotice.classList.toggle('hidden', !p2p.isAnonymous);
+    }
+  }
+
+  let latestMembers = [];
+  let hostingHeartbeatTimer = null;
+
+  const social = new window.ZoriiSocial({
+    onSocialChanged: () => {
+      renderSocialUI();
+    }
+  });
+
+  function formatFollowersLabel(count) {
+    const n = Number(count) || 0;
+    return n === 1 ? '1 abonné' : `${n} abonnés`;
+  }
+
+  const NO_EMAIL_DOMAIN = '@noemail.zorii.app';
+
+  function isNoEmailUser(user) {
+    return Boolean(user && user.email && user.email.toLowerCase().endsWith(NO_EMAIL_DOMAIN));
+  }
+
+  function pseudoToNoEmailAddress(pseudo) {
+    const clean = (pseudo || '').trim().toLowerCase();
+    let h1 = 0x811c9dc5;
+    let h2 = 0x9e3779b9;
+    for (let i = 0; i < clean.length; i++) {
+      const ch = clean.charCodeAt(i);
+      h1 ^= ch;
+      h1 = Math.imul(h1, 0x01000193);
+      h2 ^= ch + i;
+      h2 = Math.imul(h2, 0x85ebca6b);
+    }
+    const hex = (h1 >>> 0).toString(36) + '_' + (h2 >>> 0).toString(36);
+    return `u_${hex}${NO_EMAIL_DOMAIN}`;
+  }
+
+  function renderSocialUI() {
+    const canUseFollow = isAuthenticatedSession && !p2p.isAnonymous && !views.auth.classList.contains('active');
+    const canHaveFollowers = canUseFollow && p2p.isEmailVerified;
+
+    if (followSidebar) {
+      followSidebar.classList.toggle('hidden', !canUseFollow);
+    }
+    if (topbarFollowersPill) {
+      topbarFollowersPill.classList.toggle('hidden', !canHaveFollowers);
+    }
+    if (sidebarFollowersCount) {
+      sidebarFollowersCount.classList.toggle('hidden', !canHaveFollowers);
+    }
+    if (btnToggleFollowSidebar) {
+      btnToggleFollowSidebar.classList.toggle('hidden', !canUseFollow);
+    }
+
+    if (!canUseFollow) return;
+
+    const myFollowers = social.getMyFollowerCount();
+    if (topbarFollowersCount) topbarFollowersCount.textContent = myFollowers;
+    if (sidebarFollowersCount) sidebarFollowersCount.textContent = formatFollowersLabel(myFollowers);
+    if (profileFollowersCount) profileFollowersCount.textContent = formatFollowersLabel(myFollowers);
+
+    if (followRtdbNotice) {
+      if (social.rtdbError) {
+        followRtdbNotice.textContent = social.rtdbError;
+        followRtdbNotice.classList.remove('hidden');
+      } else {
+        followRtdbNotice.classList.add('hidden');
+      }
+    }
+
+    const p2pRooms = p2p.getRooms();
+
+    // 1. Search / Discover Verified Users
+    if (followSearchResultsEl && followSearchInput) {
+      const q = followSearchInput.value.trim();
+      if (!q) {
+        followSearchResultsEl.classList.add('hidden');
+        followSearchResultsEl.innerHTML = '';
+      } else {
+        const matches = social.getVerifiedUsers(q, p2pRooms);
+        followSearchResultsEl.classList.remove('hidden');
+        followSearchResultsEl.innerHTML = '';
+
+        if (matches.length === 0) {
+          const empty = document.createElement('div');
+          empty.className = 'follow-empty-search';
+          empty.textContent = 'Aucun utilisateur vérifié trouvé';
+          followSearchResultsEl.appendChild(empty);
+        } else {
+          matches.slice(0, 12).forEach((u) => {
+            const row = document.createElement('div');
+            row.className = 'follow-search-row';
+
+            const left = document.createElement('div');
+            left.className = 'follow-user-left';
+
+            const dot = document.createElement('span');
+            dot.className = 'status-dot';
+            dot.style.backgroundColor = u.color || cfg.USER_COLORS[0];
+            dot.style.boxShadow = `0 0 8px ${u.color || cfg.USER_COLORS[0]}`;
+
+            const info = document.createElement('div');
+            info.className = 'follow-user-info';
+
+            const nameEl = document.createElement('div');
+            nameEl.className = 'follow-user-name';
+            nameEl.style.color = u.color || cfg.USER_COLORS[0];
+            nameEl.textContent = u.name;
+
+            const subEl = document.createElement('div');
+            subEl.className = 'follow-user-sub';
+            subEl.textContent = formatFollowersLabel(u.followersCount);
+
+            info.appendChild(nameEl);
+            info.appendChild(subEl);
+            left.appendChild(dot);
+            left.appendChild(info);
+
+            const followBtn = document.createElement('button');
+            followBtn.type = 'button';
+            followBtn.className = 'btn-follow-sm' + (u.isFollowing ? ' following' : '');
+            followBtn.textContent = u.isFollowing ? 'Suivi' : 'Follow';
+            followBtn.addEventListener('click', async () => {
+              await social.toggleFollow(u.uid);
+            });
+
+            row.appendChild(left);
+            row.appendChild(followBtn);
+            followSearchResultsEl.appendChild(row);
+          });
+        }
+      }
+    }
+
+    // 2. Discord-style Followed Users List
+    if (followingListEl) {
+      const followed = social.getFollowedUsers(p2pRooms);
+      followingListEl.innerHTML = '';
+
+      if (followed.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'follow-empty';
+        empty.textContent = 'Aucun abonnement. Cherchez un utilisateur vérifié ci-dessus ou cliquez sur Follow dans une room.';
+        followingListEl.appendChild(empty);
+      } else {
+        followed.forEach((u) => {
+          const item = document.createElement('div');
+          item.className = 'following-item' + (u.hostingInfo ? ' is-hosting' : '');
+
+          const left = document.createElement('div');
+          left.className = 'follow-user-left';
+
+          const avatar = document.createElement('span');
+          avatar.className = 'follow-avatar-dot' + (u.hostingInfo ? ' hosting-pulse' : '');
+          avatar.style.backgroundColor = u.color || cfg.USER_COLORS[0];
+          avatar.style.color = u.color || cfg.USER_COLORS[0];
+
+          const info = document.createElement('div');
+          info.className = 'follow-user-info';
+
+          const nameRow = document.createElement('div');
+          nameRow.className = 'follow-name-row';
+
+          const nameEl = document.createElement('span');
+          nameEl.className = 'follow-user-name';
+          nameEl.style.color = u.color || cfg.USER_COLORS[0];
+          nameEl.textContent = u.name;
+
+          const countEl = document.createElement('span');
+          countEl.className = 'follow-count-mini';
+          countEl.textContent = `${u.followersCount}`;
+          countEl.title = formatFollowersLabel(u.followersCount);
+
+          nameRow.appendChild(nameEl);
+          nameRow.appendChild(countEl);
+          info.appendChild(nameRow);
+
+          const statusEl = document.createElement('div');
+          statusEl.className = 'follow-user-status';
+          if (u.hostingInfo) {
+            statusEl.classList.add('hosting');
+            statusEl.textContent = `Héberge : ${u.hostingInfo.roomName}`;
+          } else {
+            statusEl.textContent = 'Ne héberge pas';
+          }
+          info.appendChild(statusEl);
+
+          left.appendChild(avatar);
+          left.appendChild(info);
+
+          const actions = document.createElement('div');
+          actions.className = 'following-actions';
+
+          if (u.hostingInfo) {
+            const joinBtn = document.createElement('button');
+            joinBtn.type = 'button';
+            joinBtn.className = 'btn-follow-join';
+            joinBtn.textContent = 'Join';
+            joinBtn.title = `Rejoindre ${u.hostingInfo.roomName}`;
+            joinBtn.addEventListener('click', () => {
+              p2p.joinRoom(u.hostingInfo.roomId);
+              if (followSidebar) followSidebar.classList.remove('mobile-open');
+            });
+            actions.appendChild(joinBtn);
+          }
+
+          const unfollowBtn = document.createElement('button');
+          unfollowBtn.type = 'button';
+          unfollowBtn.className = 'btn-unfollow-x';
+          unfollowBtn.title = `Ne plus suivre ${u.name}`;
+          unfollowBtn.textContent = '×';
+          unfollowBtn.addEventListener('click', async () => {
+            await social.unfollow(u.uid);
+          });
+          actions.appendChild(unfollowBtn);
+
+          item.appendChild(left);
+          item.appendChild(actions);
+          followingListEl.appendChild(item);
+        });
+      }
+    }
+
+    // Keep room member rows synchronized with follow state & follower counts
+    if (views.room.classList.contains('active') && p2p.activeRoom) {
+      renderRoomMembersList(latestMembers);
+    }
+  }
+
+  function renderRoomMembersList(members) {
+    usersListEl.innerHTML = '';
+    members.forEach((m) => {
+      const li = document.createElement('li');
+      li.className = 'user-row';
+
+      const left = document.createElement('div');
+      left.className = 'user-row-left';
+
+      const userColor = m.color || cfg.USER_COLORS[0];
+
+      const dot = document.createElement('span');
+      dot.className = 'status-dot';
+      dot.style.backgroundColor = userColor;
+      dot.style.boxShadow = `0 0 8px ${userColor}`;
+
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'user-row-name';
+      nameSpan.style.color = userColor;
+      nameSpan.textContent = m.name;
+
+      left.appendChild(dot);
+      left.appendChild(nameSpan);
+      li.appendChild(left);
+
+      const right = document.createElement('div');
+      right.className = 'user-row-right';
+
+      if (m.isHost) {
+        const tag = document.createElement('span');
+        tag.className = 'user-tag';
+        tag.textContent = 'Host';
+        right.appendChild(tag);
+      } else if (m.id === p2p.clientId) {
+        const tag = document.createElement('span');
+        tag.className = 'user-tag';
+        tag.textContent = 'You';
+        right.appendChild(tag);
+      }
+
+      const isTargetVerified = Boolean(m.isVerified || m.isHost || social.isVerifiedUser(m.id));
+      if (!p2p.isAnonymous && m.id && m.id !== p2p.clientId && isTargetVerified) {
+        const following = social.isFollowing(m.id);
+        const fBtn = document.createElement('button');
+        fBtn.type = 'button';
+        fBtn.className = 'btn-member-follow' + (following ? ' following' : '');
+        fBtn.title = `${social.getFollowerCount(m.id)} abonnés`;
+        fBtn.textContent = following ? 'Suivi' : '+ Follow';
+        fBtn.addEventListener('click', async () => {
+          await social.toggleFollow(m.id, {
+            uid: m.id,
+            name: m.name,
+            color: m.color,
+            verified: true
+          });
+        });
+        right.appendChild(fBtn);
+      }
+
+      li.appendChild(right);
+      usersListEl.appendChild(li);
+    });
+  }
+
   // Instantiate Zorii Engine
   const p2p = new window.ZoriiP2P({
     onRoomsChanged: (rooms) => {
       if (views.join.classList.contains('active')) {
         renderRoomsList(rooms, false);
       }
+      renderSocialUI();
     },
     onEnterRoom: (room, isHost) => {
       renderedMsgCount = 0;
@@ -154,10 +568,30 @@ document.addEventListener('DOMContentLoaded', () => {
       if (btnSaveRoom) {
         btnSaveRoom.classList.toggle('hidden', !isHost);
       }
+      if (spectatorsCountEl) {
+        spectatorsCountEl.textContent = Number(room.spectatorCount) || 0;
+      }
+      syncRoomSpectatorUI();
       updateRoomXpUI(room.xp);
+
+      clearInterval(hostingHeartbeatTimer);
+      if (isHost) {
+        social.setHostingRoom(room);
+        hostingHeartbeatTimer = setInterval(() => {
+          if (p2p.role === 'host' && p2p.activeRoom) {
+            social.setHostingRoom(p2p.activeRoom);
+          }
+        }, 8000);
+      } else {
+        social.setHostingRoom(null);
+      }
+
       showView('view-room');
     },
     onRoomState: ({ room, isHost, members, messages }) => {
+      latestMembers = members || [];
+      social.observeRoomMembers(latestMembers);
+
       roomTitleEl.textContent = room.name;
       roomDescEl.textContent = room.desc || '';
       roomCodeText.textContent = room.id;
@@ -168,52 +602,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
       // Left vertical XP bar
       updateRoomXpUI(room.xp);
+      syncRoomSpectatorUI();
 
-      // Render connected members list with each user's custom color
-      usersCountEl.textContent = `${members.length} / ${room.max}`;
-      usersListEl.innerHTML = '';
-
-      members.forEach((m) => {
-        const li = document.createElement('li');
-        li.className = 'user-row';
-
-        const left = document.createElement('div');
-        left.className = 'user-row-left';
-
-        const userColor = m.color || cfg.USER_COLORS[0];
-
-        const dot = document.createElement('span');
-        dot.className = 'status-dot';
-        dot.style.backgroundColor = userColor;
-        dot.style.boxShadow = `0 0 8px ${userColor}`;
-
-        const nameSpan = document.createElement('span');
-        nameSpan.className = 'user-row-name';
-        nameSpan.style.color = userColor;
-        nameSpan.textContent = m.name;
-
-        left.appendChild(dot);
-        left.appendChild(nameSpan);
-        li.appendChild(left);
-
-        const right = document.createElement('div');
-        right.className = 'user-row-right';
-
-        if (m.isHost) {
-          const tag = document.createElement('span');
-          tag.className = 'user-tag';
-          tag.textContent = 'Host';
-          right.appendChild(tag);
-        } else if (m.id === p2p.clientId) {
-          const tag = document.createElement('span');
-          tag.className = 'user-tag';
-          tag.textContent = 'You';
-          right.appendChild(tag);
-        }
-
-        li.appendChild(right);
-        usersListEl.appendChild(li);
-      });
+      // Render connected members list + separate spectator count
+      usersCountEl.textContent = `${latestMembers.length} / ${room.max}`;
+      if (spectatorsCountEl) {
+        spectatorsCountEl.textContent = Number(room.spectatorCount) || 0;
+      }
+      renderRoomMembersList(latestMembers);
 
       // Render messages efficiently
       if (messages.length < renderedMsgCount) {
@@ -321,7 +717,7 @@ document.addEventListener('DOMContentLoaded', () => {
       filtered
         .map((r) => {
           const lvl = p2p.computeRoomLevel(r.xp).level;
-          return `${r.id}:${r.name}:${r.desc}:${r.hostName}:${r.count}:${r.max}:${r.xp || 0}:${lvl}`;
+          return `${r.id}:${r.name}:${r.desc}:${r.hostName}:${r.count}:${r.spectatorCount || 0}:${r.max}:${r.xp || 0}:${lvl}`;
         })
         .join('|');
 
@@ -381,8 +777,15 @@ document.addEventListener('DOMContentLoaded', () => {
       const rightWrap = document.createElement('div');
       rightWrap.className = 'room-item-right';
 
+      const specCount = Number(r.spectatorCount) || 0;
+      const specBadge = document.createElement('div');
+      specBadge.className = 'room-item-spectators';
+      specBadge.title = 'Spectateurs anonymes';
+      specBadge.textContent = `${specCount} spec.`;
+
       const count = document.createElement('div');
       count.className = 'room-item-count';
+      count.title = 'Membres';
       count.textContent = `${r.count} / ${r.max}`;
 
       const joinBtn = document.createElement('button');
@@ -391,6 +794,7 @@ document.addEventListener('DOMContentLoaded', () => {
       joinBtn.setAttribute('data-room-id', r.id);
       joinBtn.textContent = 'Join';
 
+      rightWrap.appendChild(specBadge);
       rightWrap.appendChild(count);
       rightWrap.appendChild(joinBtn);
 
@@ -400,36 +804,447 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // 1. Account (Username + Color)
-  const savedUser = localStorage.getItem(cfg.STORAGE_USER_KEY);
-  if (savedUser && savedUser.trim()) {
-    loginWithProfile(savedUser.trim(), selectedColor);
+  // 1. Firebase Account System (Pseudo + Password + Verified Email + Anonymous Spectator)
+  function switchAuthTab(mode) {
+    showAuthError('');
+    const isLogin = mode === 'login';
+    tabLogin.classList.toggle('active', isLogin);
+    tabRegister.classList.toggle('active', !isLogin);
+    formLogin.classList.toggle('hidden', !isLogin);
+    formRegister.classList.toggle('hidden', isLogin);
+    setTimeout(() => {
+      if (isLogin) loginEmailInput.focus();
+      else regUsernameInput.focus();
+    }, 40);
   }
 
-  function loginWithProfile(name, color) {
-    p2p.setProfile(name, color);
-    localStorage.setItem(cfg.STORAGE_USER_KEY, name);
-    localStorage.setItem(cfg.STORAGE_COLOR_KEY, color);
-    currentUsernameEl.textContent = name;
-    currentUsernameEl.style.color = color;
-    currentUserDot.style.backgroundColor = color;
-    currentUserDot.style.boxShadow = `0 0 8px ${color}`;
+  tabLogin.addEventListener('click', () => switchAuthTab('login'));
+  tabRegister.addEventListener('click', () => switchAuthTab('register'));
+
+  if (followSearchInput) {
+    followSearchInput.addEventListener('input', () => {
+      renderSocialUI();
+    });
+  }
+
+  if (btnToggleFollowSidebar && followSidebar) {
+    btnToggleFollowSidebar.addEventListener('click', () => {
+      followSidebar.classList.toggle('mobile-open');
+    });
+  }
+
+  if (loginNoEmailToggle) {
+    loginNoEmailToggle.addEventListener('change', () => {
+      showAuthError('');
+      const noEmail = loginNoEmailToggle.checked;
+      loginEmailInput.type = noEmail ? 'text' : 'email';
+      loginEmailInput.placeholder = noEmail ? 'Pseudo' : 'Adresse e-mail';
+      loginEmailInput.value = '';
+      if (btnForgotPassword) {
+        btnForgotPassword.classList.toggle('hidden', noEmail);
+      }
+      loginEmailInput.focus();
+    });
+  }
+
+  if (regNoEmailToggle) {
+    regNoEmailToggle.addEventListener('change', () => {
+      showAuthError('');
+      const noEmail = regNoEmailToggle.checked;
+      regEmailInput.classList.toggle('hidden', noEmail);
+      regEmailInput.required = !noEmail;
+      if (noEmail) regEmailInput.value = '';
+    });
+  }
+
+  function applyAuthenticatedUser(user) {
+    currentFirebaseUser = user;
+    if (!user) {
+      isAuthenticatedSession = false;
+      clearInterval(hostingHeartbeatTimer);
+      social.setHostingRoom(null);
+      social.setUser({ uid: null, isVerified: false, canFollow: false });
+      if (p2p.activeRoom) p2p.leaveRoom();
+      showAuthError('');
+      authFormsWrap.classList.remove('hidden');
+      authVerifyPanel.classList.add('hidden');
+      showView('view-auth');
+      renderSocialUI();
+      return;
+    }
+
+    if (user.isAnonymous) {
+      isAuthenticatedSession = true;
+      clearInterval(hostingHeartbeatTimer);
+      social.setHostingRoom(null);
+      social.setUser({ uid: user.uid, isVerified: false, canFollow: false });
+      p2p.setProfile('Anonyme', cfg.USER_COLORS[0], true, user.uid, false);
+      currentUsernameEl.textContent = 'Anonyme (Spectateur)';
+      currentUsernameEl.style.color = 'var(--text-dim)';
+      currentUserDot.style.backgroundColor = 'var(--text-dim)';
+      currentUserDot.style.boxShadow = 'none';
+      btnGoHost.classList.add('btn-menu-locked');
+      showView(p2p.activeRoom ? 'view-room' : 'view-menu');
+      renderSocialUI();
+      return;
+    }
+
+    const noEmailAccount = isNoEmailUser(user);
+
+    if (!noEmailAccount && !user.emailVerified) {
+      isAuthenticatedSession = false;
+      clearInterval(hostingHeartbeatTimer);
+      social.setHostingRoom(null);
+      social.setUser({ uid: user.uid, isVerified: false, canFollow: false });
+      if (p2p.activeRoom) p2p.leaveRoom();
+      verifyEmailLabel.textContent = user.email || '';
+      authFormsWrap.classList.add('hidden');
+      authVerifyPanel.classList.remove('hidden');
+      showAuthError('');
+      showView('view-auth');
+      renderSocialUI();
+      return;
+    }
+
+    // Authenticated Firebase user (either Email Verified OR No-Email limited account)
+    isAuthenticatedSession = true;
+    const isVerifiedAccount = !noEmailAccount && Boolean(user.emailVerified);
+    const savedUserColor =
+      localStorage.getItem(`${cfg.STORAGE_COLOR_KEY}_${user.uid}`) ||
+      localStorage.getItem(cfg.STORAGE_COLOR_KEY) ||
+      selectedColor;
+    selectedColor = savedUserColor;
+
+    const pseudo =
+      (user.displayName && user.displayName.trim()) ||
+      pendingRegisterPseudo ||
+      (user.email && !noEmailAccount ? user.email.split('@')[0] : 'User');
+    pendingRegisterPseudo = '';
+
+    p2p.setProfile(pseudo, savedUserColor, false, user.uid, isVerifiedAccount);
+    social.setUser({
+      uid: user.uid,
+      name: pseudo,
+      color: savedUserColor,
+      isVerified: isVerifiedAccount,
+      canFollow: true
+    });
+    localStorage.setItem(cfg.STORAGE_USER_KEY, pseudo);
+    localStorage.setItem(`${cfg.STORAGE_COLOR_KEY}_${user.uid}`, savedUserColor);
+    localStorage.setItem(cfg.STORAGE_COLOR_KEY, savedUserColor);
+
+    currentUsernameEl.textContent = pseudo;
+    currentUsernameEl.style.color = savedUserColor;
+    currentUserDot.style.backgroundColor = savedUserColor;
+    currentUserDot.style.boxShadow = `0 0 8px ${savedUserColor}`;
+    btnGoHost.classList.toggle('btn-menu-locked', !isVerifiedAccount);
+
     showView(p2p.activeRoom ? 'view-room' : 'view-menu');
+    renderSocialUI();
   }
 
-  formAuth.addEventListener('submit', (e) => {
+  if (firebaseAuth) {
+    firebaseAuth.onAuthStateChanged((user) => {
+      applyAuthenticatedUser(user);
+    });
+  } else {
+    showAuthError('SDK Firebase indisponible.');
+  }
+
+  formLogin.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const val = inputUsername.value.trim();
-    if (!val) return;
-    loginWithProfile(val, selectedColor);
+    if (!firebaseAuth) return;
+    const rawIdentifier = loginEmailInput.value.trim();
+    const password = loginPasswordInput.value;
+    if (!rawIdentifier || !password) return;
+
+    const noEmailMode = loginNoEmailToggle && loginNoEmailToggle.checked;
+    const email = noEmailMode ? pseudoToNoEmailAddress(rawIdentifier) : rawIdentifier;
+
+    showAuthError('');
+    btnLoginSubmit.disabled = true;
+    try {
+      const cred = await firebaseAuth.signInWithEmailAndPassword(email, password);
+      if (cred.user && !isNoEmailUser(cred.user) && !cred.user.emailVerified) {
+        await cred.user.reload();
+      }
+      applyAuthenticatedUser(firebaseAuth.currentUser);
+    } catch (err) {
+      if (noEmailMode && err && (err.code === 'auth/invalid-credential' || err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password')) {
+        showAuthError('Pseudo ou mot de passe incorrect.');
+      } else {
+        showAuthError(formatFirebaseError(err));
+      }
+    } finally {
+      btnLoginSubmit.disabled = false;
+    }
   });
 
+  formRegister.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!firebaseAuth) return;
+    const pseudo = regUsernameInput.value.trim();
+    const noEmailMode = regNoEmailToggle && regNoEmailToggle.checked;
+    const email = noEmailMode ? pseudoToNoEmailAddress(pseudo) : regEmailInput.value.trim();
+    const password = regPasswordInput.value;
+    if (pseudo.length < 2) {
+      showAuthError('Le pseudo doit contenir au moins 2 caractères.');
+      return;
+    }
+    if ((!noEmailMode && !email) || password.length < 6) {
+      showAuthError('E-mail invalide ou mot de passe trop court (6 min).');
+      return;
+    }
+
+    showAuthError('');
+    btnRegisterSubmit.disabled = true;
+    pendingRegisterPseudo = pseudo;
+    try {
+      const cred = await firebaseAuth.createUserWithEmailAndPassword(email, password);
+      await cred.user.updateProfile({ displayName: pseudo });
+      localStorage.setItem(`${cfg.STORAGE_COLOR_KEY}_${cred.user.uid}`, selectedColor);
+      localStorage.setItem(cfg.STORAGE_COLOR_KEY, selectedColor);
+
+      if (noEmailMode) {
+        showToast(`Compte sans e-mail créé pour ${pseudo} (Join, Chat, Follow)`);
+        applyAuthenticatedUser(cred.user);
+      } else {
+        await cred.user.sendEmailVerification();
+        showToast(`E-mail de vérification envoyé à ${email}`);
+        applyAuthenticatedUser(cred.user);
+      }
+    } catch (err) {
+      pendingRegisterPseudo = '';
+      if (noEmailMode && err && err.code === 'auth/email-already-in-use') {
+        showAuthError('Ce pseudo sans e-mail est déjà utilisé.');
+      } else {
+        showAuthError(formatFirebaseError(err));
+      }
+    } finally {
+      btnRegisterSubmit.disabled = false;
+    }
+  });
+
+  btnForgotPassword.addEventListener('click', async () => {
+    if (!firebaseAuth) return;
+    const email = loginEmailInput.value.trim();
+    if (!email) {
+      showAuthError('Entrez votre e-mail pour réinitialiser le mot de passe.');
+      loginEmailInput.focus();
+      return;
+    }
+    showAuthError('');
+    try {
+      await firebaseAuth.sendPasswordResetEmail(email);
+      showToast(`Lien de réinitialisation envoyé à ${email}`);
+    } catch (err) {
+      showAuthError(formatFirebaseError(err));
+    }
+  });
+
+  btnAnonLogin.addEventListener('click', async () => {
+    if (!firebaseAuth) return;
+    showAuthError('');
+    btnAnonLogin.disabled = true;
+    try {
+      await firebaseAuth.signInAnonymously();
+    } catch (err) {
+      showAuthError(formatFirebaseError(err));
+    } finally {
+      btnAnonLogin.disabled = false;
+    }
+  });
+
+  btnCheckVerified.addEventListener('click', async () => {
+    if (!firebaseAuth || !firebaseAuth.currentUser) return;
+    showAuthError('');
+    btnCheckVerified.disabled = true;
+    try {
+      await firebaseAuth.currentUser.reload();
+      const user = firebaseAuth.currentUser;
+      if (user && user.emailVerified) {
+        showToast('Compte vérifié ! Bienvenue sur Zorii.');
+        applyAuthenticatedUser(user);
+      } else {
+        showAuthError("E-mail pas encore vérifié. Cliquez sur le lien reçu par e-mail (vérifiez vos spams).");
+      }
+    } catch (err) {
+      showAuthError(formatFirebaseError(err));
+    } finally {
+      btnCheckVerified.disabled = false;
+    }
+  });
+
+  btnResendVerify.addEventListener('click', async () => {
+    if (!firebaseAuth || !firebaseAuth.currentUser) return;
+    showAuthError('');
+    btnResendVerify.disabled = true;
+    try {
+      await firebaseAuth.currentUser.sendEmailVerification();
+      showToast('Nouvel e-mail de vérification envoyé !');
+    } catch (err) {
+      showAuthError(formatFirebaseError(err));
+    } finally {
+      btnResendVerify.disabled = false;
+    }
+  });
+
+  btnVerifyLogout.addEventListener('click', async () => {
+    if (!firebaseAuth) return;
+    await firebaseAuth.signOut();
+  });
+
+  function showPasswordFeedback(msg, type) {
+    if (!passwordFeedbackEl) return;
+    if (!msg) {
+      passwordFeedbackEl.textContent = '';
+      passwordFeedbackEl.className = 'password-feedback hidden';
+    } else {
+      passwordFeedbackEl.textContent = msg;
+      passwordFeedbackEl.className = `password-feedback ${type === 'success' ? 'success' : 'error'}`;
+    }
+  }
+
+  // Profile View
   userBadge.addEventListener('click', () => {
-    inputUsername.value = p2p.username;
-    showView('view-auth');
+    if (!currentFirebaseUser) return;
+    showPasswordFeedback('');
+    if (formChangePassword) formChangePassword.reset();
+    if (p2p.isAnonymous) {
+      profileVerifiedBox.classList.add('hidden');
+      profileAnonBox.classList.remove('hidden');
+    } else {
+      const noEmail = isNoEmailUser(currentFirebaseUser);
+      profileVerifiedBox.classList.remove('hidden');
+      profileAnonBox.classList.add('hidden');
+      profileEmailText.textContent = noEmail ? 'Compte sans e-mail (Pas de Host)' : (currentFirebaseUser.email || '');
+      profileUsernameInput.value = p2p.username;
+      if (profileFollowersCount) {
+        profileFollowersCount.classList.toggle('hidden', noEmail);
+      }
+      if (profileVerifiedBadge) {
+        profileVerifiedBadge.textContent = noEmail ? 'Sans e-mail' : 'Vérifié';
+        profileVerifiedBadge.classList.toggle('unverified-badge', noEmail);
+      }
+      if (btnPasswordEmailPerm) {
+        btnPasswordEmailPerm.classList.toggle('hidden', noEmail);
+      }
+    }
+    showView('view-profile');
+  });
+
+  btnProfileBack.addEventListener('click', () => {
+    showView(p2p.activeRoom ? 'view-room' : 'view-menu');
+  });
+
+  formProfile.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!currentFirebaseUser || p2p.isAnonymous) return;
+    const newPseudo = profileUsernameInput.value.trim();
+    if (newPseudo.length < 2) {
+      showToast('Le pseudo doit contenir au moins 2 caractères.');
+      return;
+    }
+    try {
+      await currentFirebaseUser.updateProfile({ displayName: newPseudo });
+      localStorage.setItem(`${cfg.STORAGE_COLOR_KEY}_${currentFirebaseUser.uid}`, selectedColor);
+      localStorage.setItem(cfg.STORAGE_COLOR_KEY, selectedColor);
+      localStorage.setItem(cfg.STORAGE_USER_KEY, newPseudo);
+
+      p2p.setProfile(newPseudo, selectedColor, false, currentFirebaseUser.uid, p2p.isEmailVerified);
+      if (p2p.isEmailVerified) {
+        social.syncProfile({ name: newPseudo, color: selectedColor });
+      }
+      currentUsernameEl.textContent = newPseudo;
+      currentUsernameEl.style.color = selectedColor;
+      currentUserDot.style.backgroundColor = selectedColor;
+      currentUserDot.style.boxShadow = `0 0 8px ${selectedColor}`;
+
+      showToast('Profil mis à jour');
+      showView(p2p.activeRoom ? 'view-room' : 'view-menu');
+    } catch (err) {
+      showToast(formatFirebaseError(err));
+    }
+  });
+
+  formChangePassword.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!firebaseAuth || !firebaseAuth.currentUser || p2p.isAnonymous) return;
+    const user = firebaseAuth.currentUser;
+    const oldPassword = currentPasswordInput.value;
+    const newPassword = newPasswordInput.value;
+    const confirmPassword = confirmNewPasswordInput.value;
+
+    if (!oldPassword) {
+      showPasswordFeedback('Entrez votre ancien mot de passe.', 'error');
+      return;
+    }
+    if (newPassword.length < 6) {
+      showPasswordFeedback('Le nouveau mot de passe doit contenir au moins 6 caractères.', 'error');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      showPasswordFeedback('Les nouveaux mots de passe ne correspondent pas.', 'error');
+      return;
+    }
+    if (oldPassword === newPassword) {
+      showPasswordFeedback("Le nouveau mot de passe doit être différent de l'ancien.", 'error');
+      return;
+    }
+
+    showPasswordFeedback('');
+    btnChangePassword.disabled = true;
+    try {
+      const credential = firebase.auth.EmailAuthProvider.credential(user.email, oldPassword);
+      await user.reauthenticateWithCredential(credential);
+      await user.updatePassword(newPassword);
+      formChangePassword.reset();
+      showPasswordFeedback('Mot de passe modifié avec succès.', 'success');
+      showToast('Mot de passe mis à jour !');
+    } catch (err) {
+      const code = (err && err.code) || '';
+      if (code === 'auth/wrong-password' || code === 'auth/invalid-credential') {
+        showPasswordFeedback('Ancien mot de passe incorrect.', 'error');
+      } else {
+        showPasswordFeedback(formatFirebaseError(err), 'error');
+      }
+    } finally {
+      btnChangePassword.disabled = false;
+    }
+  });
+
+  btnPasswordEmailPerm.addEventListener('click', async () => {
+    if (!firebaseAuth || !firebaseAuth.currentUser || p2p.isAnonymous) return;
+    const email = firebaseAuth.currentUser.email;
+    if (!email) return;
+
+    showPasswordFeedback('');
+    btnPasswordEmailPerm.disabled = true;
+    try {
+      await firebaseAuth.sendPasswordResetEmail(email);
+      showPasswordFeedback(
+        `Autorisation envoyée : un lien pour modifier votre mot de passe a été envoyé à ${email} (vérifiez Gmail / spams).`,
+        'success'
+      );
+      showToast(`Lien envoyé à ${email}`);
+    } catch (err) {
+      showPasswordFeedback(formatFirebaseError(err), 'error');
+    } finally {
+      btnPasswordEmailPerm.disabled = false;
+    }
+  });
+
+  btnLogout.addEventListener('click', async () => {
+    clearInterval(hostingHeartbeatTimer);
+    social.setHostingRoom(null);
+    p2p.leaveRoom();
+    if (firebaseAuth) {
+      await firebaseAuth.signOut();
+    }
   });
 
   navHome.addEventListener('click', () => {
+    if (!isAuthenticatedSession) return;
     if (p2p.activeRoom) {
       if (views.room.classList.contains('active')) {
         showView('view-menu');
@@ -443,7 +1258,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // 2. Main Menu
   btnGoJoin.addEventListener('click', () => showView('view-join'));
-  btnGoHost.addEventListener('click', () => showView('view-host'));
+  btnGoHost.addEventListener('click', () => {
+    if (p2p.isAnonymous || !p2p.isEmailVerified) {
+      showToast('Compte avec e-mail vérifié requis pour héberger une room.');
+      return;
+    }
+    showView('view-host');
+  });
 
   document.querySelectorAll('[data-back]').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -624,7 +1445,14 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   btnLeaveRoom.addEventListener('click', () => {
+    clearInterval(hostingHeartbeatTimer);
+    social.setHostingRoom(null);
     p2p.leaveRoom();
     showView('view-menu');
+  });
+
+  window.addEventListener('beforeunload', () => {
+    clearInterval(hostingHeartbeatTimer);
+    social.setHostingRoom(null);
   });
 });

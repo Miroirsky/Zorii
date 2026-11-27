@@ -13,35 +13,218 @@
   <div id="app">
     <!-- Top Bar (Visible after auth) -->
     <header id="topbar" class="topbar hidden">
-      <div class="brand" id="nav-home" title="Main Menu">
-        <span class="brand-dot"></span>
-        <span class="brand-name">Zorii</span>
+      <div class="topbar-left">
+        <button type="button" id="btn-toggle-follow-sidebar" class="btn-icon btn-mobile-sidebar hidden" title="Abonnements">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        </button>
+        <div class="brand" id="nav-home" title="Main Menu">
+          <span class="brand-dot"></span>
+          <span class="brand-name">Zorii</span>
+        </div>
       </div>
-      <div class="user-badge" id="user-badge" title="Change Username & Color">
-        <span class="status-dot" id="current-user-dot"></span>
-        <span id="current-username"></span>
+      <div class="topbar-right">
+        <div class="followers-topbar-pill hidden" id="topbar-followers-pill" title="Vos abonnés">
+          <span id="topbar-followers-count">0</span>
+          <span>abonnés</span>
+        </div>
+        <div class="user-badge" id="user-badge" title="Profil & Compte">
+          <span class="status-dot" id="current-user-dot"></span>
+          <span id="current-username"></span>
+        </div>
       </div>
     </header>
 
-    <!-- 1. Auth View (Username + Color) -->
+    <div class="app-workspace">
+      <!-- Left Discord-style Following Sidebar (Verified Users Only) -->
+      <aside id="follow-sidebar" class="follow-sidebar hidden">
+        <div class="follow-sidebar-header">
+          <span class="follow-sidebar-title">Abonnements</span>
+          <span id="sidebar-followers-count" class="followers-badge" title="Vos abonnés">0 abonnés</span>
+        </div>
+
+        <div class="follow-search-box">
+          <input
+            type="text"
+            id="follow-search-input"
+            placeholder="Suivre un utilisateur vérifié..."
+            autocomplete="off"
+          />
+        </div>
+
+        <div id="follow-rtdb-notice" class="follow-rtdb-notice hidden"></div>
+
+        <!-- Search results for discovering & following verified users -->
+        <div id="follow-search-results" class="follow-search-results hidden"></div>
+
+        <!-- Followed users list -->
+        <div id="following-list" class="following-list"></div>
+      </aside>
+
+      <main class="views-stage">
+
+    <!-- 1. Auth View (Firebase Login / Register / Email Verification / Anonymous) -->
     <section id="view-auth" class="view active">
       <div class="center-card auth-card">
         <div class="logo-large">
           <span class="brand-dot-lg"></span>
           <h1>Zorii</h1>
         </div>
-        <form id="form-auth" autocomplete="off">
-          <input
-            type="text"
-            id="input-username"
-            placeholder="Username"
-            maxlength="20"
-            required
-            autofocus
-          />
-          <div id="color-picker" class="color-picker"></div>
-          <button type="submit" class="btn-primary">Enter</button>
-        </form>
+
+        <div id="auth-error" class="auth-error hidden"></div>
+
+        <!-- Auth Forms Container -->
+        <div id="auth-forms-wrap">
+          <div class="auth-tabs">
+            <button type="button" id="tab-login" class="auth-tab active">Connexion</button>
+            <button type="button" id="tab-register" class="auth-tab">Créer un compte</button>
+          </div>
+
+          <!-- Login Form -->
+          <form id="form-login" class="auth-form" autocomplete="on">
+            <label class="auth-check-row">
+              <input type="checkbox" id="login-no-email-toggle" />
+              <span>Connexion sans e-mail (Pseudo)</span>
+            </label>
+            <input
+              type="email"
+              id="login-email"
+              placeholder="Adresse e-mail"
+              required
+              autofocus
+            />
+            <input
+              type="password"
+              id="login-password"
+              placeholder="Mot de passe"
+              required
+            />
+            <button type="button" id="btn-forgot-password" class="btn-link">Mot de passe oublié ?</button>
+            <button type="submit" id="btn-login-submit" class="btn-primary">Se connecter</button>
+          </form>
+
+          <!-- Register Form -->
+          <form id="form-register" class="auth-form hidden" autocomplete="off">
+            <input
+              type="text"
+              id="reg-username"
+              placeholder="Pseudo"
+              maxlength="20"
+              required
+            />
+            <label class="auth-check-row">
+              <input type="checkbox" id="reg-no-email-toggle" />
+              <span>Créer sans e-mail (Join, Chat, Follow uniquement)</span>
+            </label>
+            <input
+              type="email"
+              id="reg-email"
+              placeholder="Adresse e-mail"
+              required
+            />
+            <input
+              type="password"
+              id="reg-password"
+              placeholder="Mot de passe (min. 6 caractères)"
+              minlength="6"
+              required
+            />
+            <div id="color-picker" class="color-picker"></div>
+            <button type="submit" id="btn-register-submit" class="btn-primary">Créer le compte</button>
+          </form>
+
+          <div class="auth-divider"><span>ou</span></div>
+
+          <button type="button" id="btn-anon-login" class="btn-anon">
+            <span class="btn-anon-title">Connexion anonyme (Spectateur)</span>
+            <span class="btn-anon-sub">Invisible dans les rooms • Lecture seule</span>
+          </button>
+        </div>
+
+        <!-- Email Verification Pending Panel -->
+        <div id="auth-verify-panel" class="auth-verify-panel hidden">
+          <div class="verify-icon">✉️</div>
+          <h2 class="verify-title">Vérifiez votre e-mail</h2>
+          <p class="verify-desc">
+            Un lien de vérification a été envoyé à <strong id="verify-email-label"></strong>.
+            Confirmez votre adresse avant d'accéder aux rooms.
+          </p>
+          <button type="button" id="btn-check-verified" class="btn-primary">J'ai vérifié mon e-mail</button>
+          <button type="button" id="btn-resend-verify" class="btn-secondary">Renvoyer l'e-mail</button>
+          <button type="button" id="btn-verify-logout" class="btn-link">Se déconnecter / Changer de compte</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 1b. Profile / Account Settings View -->
+    <section id="view-profile" class="view">
+      <div class="center-card auth-card profile-card">
+        <div class="panel-header-simple">
+          <button class="btn-icon" id="btn-profile-back" title="Retour">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+          </button>
+          <h2>Mon Compte</h2>
+        </div>
+
+        <div id="profile-verified-box" class="profile-box">
+          <div class="profile-meta">
+            <span class="profile-email" id="profile-email-text"></span>
+            <div class="profile-badges">
+              <span class="followers-badge" id="profile-followers-count">0 abonnés</span>
+              <span class="verified-badge" id="profile-verified-badge">Vérifié</span>
+            </div>
+          </div>
+          <form id="form-profile" autocomplete="off">
+            <input
+              type="text"
+              id="profile-username"
+              placeholder="Pseudo"
+              maxlength="20"
+              required
+            />
+            <div id="profile-color-picker" class="color-picker"></div>
+            <button type="submit" class="btn-primary">Enregistrer</button>
+          </form>
+
+          <div class="profile-divider"><span>Mot de passe</span></div>
+
+          <div id="password-feedback" class="password-feedback hidden"></div>
+
+          <form id="form-change-password" autocomplete="off">
+            <input
+              type="password"
+              id="current-password"
+              placeholder="Ancien mot de passe"
+              required
+            />
+            <input
+              type="password"
+              id="new-password"
+              placeholder="Nouveau mot de passe (min. 6 caractères)"
+              minlength="6"
+              required
+            />
+            <input
+              type="password"
+              id="confirm-new-password"
+              placeholder="Confirmer le nouveau mot de passe"
+              minlength="6"
+              required
+            />
+            <button type="submit" id="btn-change-password" class="btn-secondary">Changer le mot de passe</button>
+          </form>
+
+          <button type="button" id="btn-password-email-perm" class="btn-email-perm">
+            Ou demander l'autorisation par e-mail (Gmail)
+          </button>
+        </div>
+
+        <div id="profile-anon-box" class="profile-box hidden">
+          <p class="anon-profile-desc">
+            Vous êtes connecté en tant que <strong>spectateur anonyme</strong>. Vous êtes invisible dans les rooms et ne pouvez pas envoyer de messages ni héberger.
+          </p>
+        </div>
+
+        <button type="button" id="btn-logout" class="btn-danger-outline">Se déconnecter</button>
       </div>
     </section>
 
@@ -190,27 +373,44 @@
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
             </button>
           </form>
+          <div id="chat-readonly-notice" class="chat-readonly-notice hidden">
+            Mode spectateur (anonyme) — lecture seule, envoi de messages désactivé
+          </div>
         </div>
 
-        <!-- Right Sidebar: Connected Users -->
+        <!-- Right Sidebar: Connected Users & Spectators -->
         <aside class="users-sidebar">
           <div class="users-header">
+            <span>Membres</span>
             <span id="users-count">0 / 0</span>
+          </div>
+          <div class="spectators-header">
+            <span>Spectateurs</span>
+            <span id="spectators-count" class="spectators-count-badge">0</span>
           </div>
           <ul id="users-list" class="users-list"></ul>
         </aside>
       </div>
     </section>
+      </main>
+    </div>
 
     <!-- Minimal Toast -->
     <div id="toast" class="toast hidden"></div>
   </div>
+
+  <!-- Firebase App, Auth, Database & Analytics (Compat CDN) -->
+  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-database-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-analytics-compat.js"></script>
 
   <!-- PeerJS for WebRTC P2P Hosting + MQTT for decentralized room discovery -->
   <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
   <script src="https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js"></script>
   <script src="Values/config.js"></script>
   <script src="Scripts/p2p.js"></script>
+  <script src="Scripts/social.js"></script>
   <script src="Scripts/app.js"></script>
 </body>
 </html>

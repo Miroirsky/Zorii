@@ -30,8 +30,19 @@ window.ZORII_CONFIG = {
   ],
   HEARTBEAT_MS: 3000,
   ROOM_TTL_MS: 12000,
+  SPECTATOR_TTL_MS: 15000,
   MIN_MEMBERS: 5,
   MAX_MEMBERS: 100,
   LEVEL1_XP: 10,
-  LEVEL_XP_MULTIPLIER: 10
+  LEVEL_XP_MULTIPLIER: 10,
+  FIREBASE_CONFIG: {
+    apiKey: 'AIzaSyDaWhU68yjghUgm8HBlbs9Ngj3ii46jthE',
+    authDomain: 'zorii-c1a38.firebaseapp.com',
+    databaseURL: 'https://zorii-c1a38-default-rtdb.europe-west1.firebasedatabase.app',
+    projectId: 'zorii-c1a38',
+    storageBucket: 'zorii-c1a38.firebasestorage.app',
+    messagingSenderId: '576444699642',
+    appId: '1:576444699642:web:1fcf66eb88a06e181d8a43',
+    measurementId: 'G-C2M2LJRZTG'
+  }
 };

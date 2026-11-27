@@ -23,6 +23,8 @@ class ZoriiEngine {
 
     this.username = '';
     this.userColor = this.cfg.USER_COLORS[0];
+    this.isAnonymous = false;
+    this.isEmailVerified = false;
     this.rooms = new Map(); // roomId -> room metadata
 
     // Transports
@@ -34,13 +36,15 @@ class ZoriiEngine {
 
     // Active room state
     this.role = null; // 'host' | 'guest' | null
-    this.activeRoom = null; // { id, name, desc, max, hostId, hostName, count, level, xp, currentLevelXp, xpNeeded, updatedAt }
+    this.activeRoom = null; // { id, name, desc, max, hostId, hostName, count, spectatorCount, level, xp, currentLevelXp, xpNeeded, updatedAt }
     this.members = new Map(); // clientId -> { id, name, color, isHost, joinedAt }
+    this.spectators = new Map(); // clientId -> lastSeenMs (invisible anonymous spectators)
     this.messages = [];
 
     // WebRTC PeerJS instances
     this.peer = null;
     this.hostWebRtcConns = new Map();
+    this.hostWebRtcSpectatorConns = new Map();
     this.guestWebRtcConn = null;
 
     this.heartbeatInterval = null;
@@ -49,14 +53,22 @@ class ZoriiEngine {
     this._boot();
   }
 
-  setProfile(name, color) {
-    this.username = (name || '').trim();
+  setProfile(name, color, isAnonymous = false, uid = null, isEmailVerified = false) {
+    if (uid) {
+      this.clientId = uid;
+      sessionStorage.setItem('zorii_client_id', this.clientId);
+      localStorage.setItem('zorii_client_id', this.clientId);
+    }
+    this.isAnonymous = Boolean(isAnonymous);
+    this.isEmailVerified = !this.isAnonymous && Boolean(isEmailVerified);
+    this.username = this.isAnonymous ? 'Anonyme' : (name || '').trim();
     this.userColor = color || this.cfg.USER_COLORS[0];
 
-    if (this.activeRoom && this.members.has(this.clientId)) {
+    if (this.activeRoom && !this.isAnonymous && this.members.has(this.clientId)) {
       const me = this.members.get(this.clientId);
       me.name = this.username;
       me.color = this.userColor;
+      me.isVerified = this.isEmailVerified;
       if (this.role === 'host') {
         this.activeRoom.hostName = this.username;
         this._hostCommitState();
@@ -65,7 +77,9 @@ class ZoriiEngine {
           action: 'GUEST_JOIN',
           clientId: this.clientId,
           username: this.username,
-          color: this.userColor
+          color: this.userColor,
+          isAnonymous: false,
+          isVerified: this.isEmailVerified
         };
         if (this.guestWebRtcConn && this.guestWebRtcConn.open) {
           try { this.guestWebRtcConn.send(joinPkt); } catch (_) {}
@@ -187,6 +201,7 @@ class ZoriiEngine {
           if (
             !prev ||
             prev.count !== r.count ||
+            prev.spectatorCount !== r.spectatorCount ||
             prev.level !== r.level ||
             prev.xp !== r.xp ||
             prev.name !== r.name ||
@@ -244,6 +259,7 @@ class ZoriiEngine {
     const lvlInfo = this.computeRoomLevel(xp);
     const updated = {
       ...room,
+      spectatorCount: Math.max(0, Number(room.spectatorCount) || 0),
       level: lvlInfo.level,
       xp: lvlInfo.totalXp,
       currentLevelXp: lvlInfo.currentLevelXp,
@@ -256,6 +272,7 @@ class ZoriiEngine {
     const hasMeaningfulDiff =
       !prev ||
       prev.count !== updated.count ||
+      prev.spectatorCount !== updated.spectatorCount ||
       prev.xp !== updated.xp ||
       prev.level !== updated.level ||
       prev.max !== updated.max ||
@@ -313,6 +330,7 @@ class ZoriiEngine {
     const lvlInfo = this.computeRoomLevel(xp);
     const payloadObj = {
       ...room,
+      spectatorCount: Math.max(0, Number(room.spectatorCount) || 0),
       level: lvlInfo.level,
       xp: lvlInfo.totalXp,
       currentLevelXp: lvlInfo.currentLevelXp,
@@ -426,6 +444,12 @@ class ZoriiEngine {
    * HOSTING A ROOM (YOUR COMPUTER IS THE SERVER)
    * ========================================================= */
   hostRoom({ id, name, desc, max, xp }) {
+    if (this.isAnonymous || !this.isEmailVerified) {
+      if (this.cb.onError) {
+        this.cb.onError('Compte avec e-mail vérifié requis pour héberger une room');
+      }
+      return;
+    }
     this.leaveRoom();
 
     const maxMembers = Math.min(
@@ -446,6 +470,7 @@ class ZoriiEngine {
       hostName: this.username,
       hostColor: this.userColor,
       count: 1,
+      spectatorCount: 0,
       level: lvlInfo.level,
       xp: lvlInfo.totalXp,
       currentLevelXp: lvlInfo.currentLevelXp,
@@ -454,11 +479,13 @@ class ZoriiEngine {
     };
 
     this.members.clear();
+    this.spectators.clear();
     this.members.set(this.clientId, {
       id: this.clientId,
       name: this.username,
       color: this.userColor,
       isHost: true,
+      isVerified: true,
       joinedAt: Date.now()
     });
 
@@ -476,8 +503,13 @@ class ZoriiEngine {
 
     this.heartbeatInterval = setInterval(() => {
       if (this.role === 'host' && this.activeRoom) {
-        this._publishRoomRegistry(this.activeRoom);
-        this._hostSaveLocalSnapshot();
+        const pruned = this._hostPruneStaleSpectators();
+        if (pruned) {
+          this._hostCommitState();
+        } else {
+          this._publishRoomRegistry(this.activeRoom);
+          this._hostSaveLocalSnapshot();
+        }
       }
     }, this.cfg.HEARTBEAT_MS);
 
@@ -485,6 +517,25 @@ class ZoriiEngine {
       this.cb.onEnterRoom(this.activeRoom, true);
     }
     this._notifyUIState();
+  }
+
+  _hostPruneStaleSpectators() {
+    const now = Date.now();
+    const ttl = (this.cfg && this.cfg.SPECTATOR_TTL_MS) || 15000;
+    let changed = false;
+    for (const [specId, lastSeen] of this.spectators.entries()) {
+      const conn = this.hostWebRtcSpectatorConns.get(specId);
+      if (conn && conn.open) {
+        this.spectators.set(specId, now);
+        continue;
+      }
+      if (now - lastSeen > ttl) {
+        this.spectators.delete(specId);
+        this.hostWebRtcSpectatorConns.delete(specId);
+        changed = true;
+      }
+    }
+    return changed;
   }
 
   _startHostWebRTC(roomId) {
@@ -503,6 +554,9 @@ class ZoriiEngine {
           if (conn._guestId) {
             this._hostRemoveMember(conn._guestId);
           }
+          if (conn._spectatorId) {
+            this._hostRemoveSpectator(conn._spectatorId);
+          }
         });
       });
 
@@ -510,9 +564,9 @@ class ZoriiEngine {
     } catch (_) {}
   }
 
-  _hostCommitState() {
-    if (this.role !== 'host' || !this.activeRoom) return;
+  _hostBuildSnapshot() {
     this.activeRoom.count = this.members.size;
+    this.activeRoom.spectatorCount = this.spectators.size;
     const lvlInfo = this.computeRoomLevel(this.activeRoom.xp);
     this.activeRoom.level = lvlInfo.level;
     this.activeRoom.xp = lvlInfo.totalXp;
@@ -520,12 +574,17 @@ class ZoriiEngine {
     this.activeRoom.xpNeeded = lvlInfo.xpNeeded;
     this.activeRoom.updatedAt = Date.now();
 
-    const snapshot = {
+    return {
       room: this.activeRoom,
       members: Array.from(this.members.values()),
       messages: this.messages.slice(-80),
       updatedAt: Date.now()
     };
+  }
+
+  _hostCommitState() {
+    if (this.role !== 'host' || !this.activeRoom) return;
+    const snapshot = this._hostBuildSnapshot();
 
     this._hostSaveLocalSnapshot(snapshot);
     this._publishRoomRegistry(this.activeRoom);
@@ -563,16 +622,54 @@ class ZoriiEngine {
       }
     }
 
+    for (const conn of this.hostWebRtcSpectatorConns.values()) {
+      if (conn && conn.open) {
+        try { conn.send(payload); } catch (_) {}
+      }
+    }
+
     this._emitRoomPacket(this.activeRoom.id, 'ALL_GUESTS', payload);
   }
 
   _hostProcessGuestAction(payload, webrtcConn) {
     if (!payload || !payload.action || this.role !== 'host' || !this.activeRoom) return;
 
-    // 1. Guest joins or updates profile
+    // 0. Anonymous spectator enters or pings (invisible, cannot chat, counted separately)
+    if (payload.action === 'GUEST_SPECTATE' || (payload.action === 'GUEST_JOIN' && payload.isAnonymous)) {
+      const { clientId } = payload;
+      if (!clientId) return;
+
+      const isNew = !this.spectators.has(clientId);
+      this.spectators.set(clientId, Date.now());
+
+      if (webrtcConn) {
+        webrtcConn._spectatorId = clientId;
+        this.hostWebRtcSpectatorConns.set(clientId, webrtcConn);
+      }
+
+      if (isNew) {
+        // Silent commit: no join system message and not added to members
+        this._hostCommitState();
+      } else {
+        const snapshot = this._hostBuildSnapshot();
+        const pkt = { action: 'HOST_SNAPSHOT', snapshot };
+        if (webrtcConn && webrtcConn.open) {
+          try { webrtcConn.send(pkt); } catch (_) {}
+        }
+        this._emitRoomPacket(this.activeRoom.id, clientId, pkt);
+      }
+      return;
+    }
+
+    // 1. Guest joins or updates profile (verified members only)
     if (payload.action === 'GUEST_JOIN') {
       const { clientId, username, color } = payload;
       if (!clientId || !username) return;
+
+      if (this.spectators.has(clientId)) {
+        this.spectators.delete(clientId);
+        this.hostWebRtcSpectatorConns.delete(clientId);
+      }
 
       const existing = this.members.get(clientId);
       if (!existing && this.members.size >= this.activeRoom.max) {
@@ -598,6 +695,7 @@ class ZoriiEngine {
         name: username,
         color: color || (existing && existing.color) || this.cfg.USER_COLORS[0],
         isHost: clientId === this.clientId,
+        isVerified: clientId === this.clientId ? true : Boolean(payload.isVerified),
         joinedAt: existing ? existing.joinedAt : Date.now()
       });
 
@@ -613,25 +711,17 @@ class ZoriiEngine {
       return;
     }
 
-    // 2. Guest sends chat message
+    // 2. Guest sends chat message (blocked for anonymous spectators & non-members)
     if (payload.action === 'GUEST_CHAT') {
-      const { clientId, username, color, text, msgId } = payload;
+      const { clientId, color, text, msgId, isAnonymous } = payload;
+      if (isAnonymous || !clientId || this.spectators.has(clientId) || !this.members.has(clientId)) {
+        return;
+      }
       const cleanText = (text || '').trim();
-      if (!cleanText || !clientId) return;
+      if (!cleanText) return;
 
       if (msgId && this.messages.some((m) => m.id === msgId)) {
         return;
-      }
-
-      if (!this.members.has(clientId)) {
-        if (this.members.size >= this.activeRoom.max) return;
-        this.members.set(clientId, {
-          id: clientId,
-          name: username || 'Guest',
-          color: color || this.cfg.USER_COLORS[0],
-          isHost: false,
-          joinedAt: Date.now()
-        });
       }
 
       const sender = this.members.get(clientId);
@@ -652,10 +742,23 @@ class ZoriiEngine {
       return;
     }
 
-    // 3. Guest leaves
+    // 3. Guest or spectator leaves
     if (payload.action === 'GUEST_LEAVE') {
-      this._hostRemoveMember(payload.clientId);
+      if (payload.isAnonymous || this.spectators.has(payload.clientId)) {
+        this._hostRemoveSpectator(payload.clientId);
+      } else {
+        this._hostRemoveMember(payload.clientId);
+      }
     }
+  }
+
+  _hostRemoveSpectator(clientId) {
+    if (this.role !== 'host' || !this.activeRoom) return;
+    if (!this.spectators.has(clientId)) return;
+    this.spectators.delete(clientId);
+    this.hostWebRtcSpectatorConns.delete(clientId);
+    // Silent commit: spectators are invisible in chat
+    this._hostCommitState();
   }
 
   _hostRemoveMember(clientId) {
@@ -709,9 +812,11 @@ class ZoriiEngine {
           hostName: 'Host',
           hostColor: this.cfg.USER_COLORS[0],
           count: 1,
+          spectatorCount: 0,
           xp: 0
         };
 
+    this.activeRoom.spectatorCount = Math.max(0, Number(this.activeRoom.spectatorCount) || 0);
     const initLvl = this.computeRoomLevel(this.activeRoom.xp);
     this.activeRoom.level = initLvl.level;
     this.activeRoom.xp = initLvl.totalXp;
@@ -719,6 +824,7 @@ class ZoriiEngine {
     this.activeRoom.xpNeeded = initLvl.xpNeeded;
 
     if (
+      !this.isAnonymous &&
       localSnap &&
       Array.isArray(localSnap.members) &&
       !localSnap.members.some((m) => m.id === this.clientId) &&
@@ -741,16 +847,23 @@ class ZoriiEngine {
         id: hid,
         name: this.activeRoom.hostName || 'Host',
         color: this.activeRoom.hostColor || this.cfg.USER_COLORS[0],
-        isHost: true
+        isHost: true,
+        isVerified: true
       });
     }
 
-    this.members.set(this.clientId, {
-      id: this.clientId,
-      name: this.username,
-      color: this.userColor,
-      isHost: false
-    });
+    // Anonymous spectators are invisible and never added to members
+    if (!this.isAnonymous) {
+      this.members.set(this.clientId, {
+        id: this.clientId,
+        name: this.username,
+        color: this.userColor,
+        isHost: false,
+        isVerified: this.isEmailVerified
+      });
+    } else {
+      this.activeRoom.spectatorCount = Math.max(1, this.activeRoom.spectatorCount);
+    }
 
     this.messages = (localSnap && Array.isArray(localSnap.messages))
       ? [...localSnap.messages]
@@ -771,39 +884,54 @@ class ZoriiEngine {
     this._startGuestWebRTC(roomId);
 
     let hostSynced = false;
-    const sendJoinPacket = () => {
+    const sendEntryPacket = () => {
       if (this.role !== 'guest' || !this.activeRoom) return;
-      const joinPkt = {
-        action: 'GUEST_JOIN',
-        clientId: this.clientId,
-        username: this.username,
-        color: this.userColor
-      };
+      const pkt = this.isAnonymous
+        ? {
+            action: 'GUEST_SPECTATE',
+            clientId: this.clientId,
+            isAnonymous: true
+          }
+        : {
+            action: 'GUEST_JOIN',
+            clientId: this.clientId,
+            username: this.username,
+            color: this.userColor,
+            isAnonymous: false,
+            isVerified: this.isEmailVerified
+          };
       if (this.guestWebRtcConn && this.guestWebRtcConn.open) {
-        try { this.guestWebRtcConn.send(joinPkt); } catch (_) {}
+        try { this.guestWebRtcConn.send(pkt); } catch (_) {}
       }
-      this._emitRoomPacket(roomId, 'HOST', joinPkt);
+      this._emitRoomPacket(roomId, 'HOST', pkt);
     };
 
     this._onHostConfirmed = () => {
       hostSynced = true;
     };
 
-    sendJoinPacket();
+    sendEntryPacket();
 
     let attempts = 0;
+    let tickCount = 0;
     this.guestSyncInterval = setInterval(() => {
       if (this.role !== 'guest' || !this.activeRoom) return;
+      tickCount++;
 
       const snap = this._readLocalSnapshot(roomId);
-      if (snap && snap.members && snap.members.some((m) => m.id === this.clientId)) {
-        hostSynced = true;
-        this._guestApplySnapshot(snap);
+      if (snap && snap.members) {
+        if (this.isAnonymous || snap.members.some((m) => m.id === this.clientId)) {
+          hostSynced = true;
+          this._guestApplySnapshot(snap);
+        }
       }
 
       if (!hostSynced && attempts < 10) {
         attempts++;
-        sendJoinPacket();
+        sendEntryPacket();
+      } else if (this.isAnonymous && tickCount % 8 === 0) {
+        // Periodic spectator heartbeat so host keeps accurate spectator count
+        sendEntryPacket();
       }
     }, 600);
   }
@@ -823,12 +951,22 @@ class ZoriiEngine {
         this.guestWebRtcConn = conn;
 
         conn.on('open', () => {
-          conn.send({
-            action: 'GUEST_JOIN',
-            clientId: this.clientId,
-            username: this.username,
-            color: this.userColor
-          });
+          if (this.isAnonymous) {
+            conn.send({
+              action: 'GUEST_SPECTATE',
+              clientId: this.clientId,
+              isAnonymous: true
+            });
+          } else {
+            conn.send({
+              action: 'GUEST_JOIN',
+              clientId: this.clientId,
+              username: this.username,
+              color: this.userColor,
+              isAnonymous: false,
+              isVerified: this.isEmailVerified
+            });
+          }
         });
 
         conn.on('data', (pkt) => this._guestProcessHostPacket(pkt));
@@ -871,6 +1009,7 @@ class ZoriiEngine {
       const lvlInfo = this.computeRoomLevel(xp);
       this.activeRoom = {
         ...snap.room,
+        spectatorCount: Math.max(0, Number(snap.room.spectatorCount) || 0),
         level: lvlInfo.level,
         xp: lvlInfo.totalXp,
         currentLevelXp: lvlInfo.currentLevelXp,
@@ -880,12 +1019,13 @@ class ZoriiEngine {
     if (Array.isArray(snap.members)) {
       this.members.clear();
       snap.members.forEach((m) => this.members.set(m.id, m));
-      if (!this.members.has(this.clientId)) {
+      if (!this.isAnonymous && !this.members.has(this.clientId)) {
         this.members.set(this.clientId, {
           id: this.clientId,
           name: this.username,
           color: this.userColor,
-          isHost: false
+          isHost: false,
+          isVerified: this.isEmailVerified
         });
       }
     }
@@ -909,8 +1049,9 @@ class ZoriiEngine {
    * SENDING CHAT & LEAVING ROOM
    * ========================================================= */
   sendMessage(text) {
+    if (this.isAnonymous) return false;
     const clean = (text || '').trim();
-    if (!clean || !this.activeRoom) return;
+    if (!clean || !this.activeRoom) return false;
 
     const msgId = 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
 
@@ -921,7 +1062,8 @@ class ZoriiEngine {
         username: this.username,
         color: this.userColor,
         text: clean,
-        msgId
+        msgId,
+        isAnonymous: false
       });
     } else if (this.role === 'guest') {
       this.messages.push({
@@ -941,7 +1083,8 @@ class ZoriiEngine {
         username: this.username,
         color: this.userColor,
         text: clean,
-        msgId
+        msgId,
+        isAnonymous: false
       };
 
       if (this.guestWebRtcConn && this.guestWebRtcConn.open) {
@@ -949,6 +1092,7 @@ class ZoriiEngine {
       }
       this._emitRoomPacket(this.activeRoom.id, 'HOST', chatPkt);
     }
+    return true;
   }
 
   leaveRoom() {
@@ -973,7 +1117,8 @@ class ZoriiEngine {
       const rid = this.activeRoom.id;
       const leavePkt = {
         action: 'GUEST_LEAVE',
-        clientId: this.clientId
+        clientId: this.clientId,
+        isAnonymous: this.isAnonymous
       };
       if (this.guestWebRtcConn && this.guestWebRtcConn.open) {
         try { this.guestWebRtcConn.send(leavePkt); } catch (_) {}
@@ -992,6 +1137,11 @@ class ZoriiEngine {
     }
     this.hostWebRtcConns.clear();
 
+    for (const conn of this.hostWebRtcSpectatorConns.values()) {
+      try { conn.close(); } catch (_) {}
+    }
+    this.hostWebRtcSpectatorConns.clear();
+
     if (this.peer) {
       try { this.peer.destroy(); } catch (_) {}
       this.peer = null;
@@ -1000,6 +1150,7 @@ class ZoriiEngine {
     this.role = null;
     this.activeRoom = null;
     this.members.clear();
+    this.spectators.clear();
     this.messages = [];
   }
 
