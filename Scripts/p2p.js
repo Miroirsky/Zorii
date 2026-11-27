@@ -36,9 +36,11 @@ class ZoriiEngine {
 
     // Active room state
     this.role = null; // 'host' | 'guest' | null
-    this.activeRoom = null; // { id, name, desc, max, hostId, hostName, count, spectatorCount, clicks, level, xp, currentLevelXp, xpNeeded, updatedAt }
+    this.activeRoom = null; // { id, name, desc, max, hostId, hostName, count, spectatorCount, clicks, cooldownUpgradeLevel, level, xp, currentLevelXp, xpNeeded, updatedAt }
     this.members = new Map(); // clientId -> { id, name, color, isHost, clicks, joinedAt }
     this.playerClicks = new Map(); // clientId -> number (host-authoritative session clicks)
+    this.lastPlayerClickAt = new Map(); // clientId -> timestamp ms (host cooldown enforcement)
+    this.lastLocalClickAt = 0;
     this.processedClickIds = new Set(); // clickId deduplication on host
     this.spectators = new Map(); // clientId -> lastSeenMs (invisible anonymous spectators)
     this.messages = [];
@@ -228,6 +230,32 @@ class ZoriiEngine {
     } catch (_) {}
   }
 
+  getCooldownUpgradeInfo(levelOverride) {
+    const maxLevel = 10; // 1.0s base -> -0.1s per level -> 0.0s at level 10
+    const rawLvl =
+      levelOverride !== undefined
+        ? levelOverride
+        : this.activeRoom && this.activeRoom.cooldownUpgradeLevel;
+    const level = Math.min(maxLevel, Math.max(0, Math.floor(Number(rawLvl) || 0)));
+    const cooldownMs = Math.max(0, 1000 - level * 100);
+    const cooldownSec = Number((cooldownMs / 1000).toFixed(1));
+    const isMaxed = level >= maxLevel;
+    const nextCost = isMaxed ? null : Math.round(1000 * Math.pow(5, level));
+    const nextCooldownSec = isMaxed
+      ? 0
+      : Number((Math.max(0, 1000 - (level + 1) * 100) / 1000).toFixed(1));
+
+    return {
+      level,
+      maxLevel,
+      cooldownMs,
+      cooldownSec,
+      isMaxed,
+      nextCost,
+      nextCooldownSec
+    };
+  }
+
   computeRoomLevel(xpValue) {
     const totalXp = Math.max(0, Math.floor(Number(xpValue) || 0));
     let level = 1;
@@ -259,12 +287,17 @@ class ZoriiEngine {
     }
     const prev = this.rooms.get(room.id);
     const clicks = Math.max(0, Math.floor(Number(room.clicks) || 0));
+    const cooldownUpgradeLevel = Math.min(
+      10,
+      Math.max(0, Math.floor(Number(room.cooldownUpgradeLevel) || 0))
+    );
     const xp = Math.max(Math.floor(clicks / 100), Number(room.xp) || 0);
     const lvlInfo = this.computeRoomLevel(xp);
     const updated = {
       ...room,
       spectatorCount: Math.max(0, Number(room.spectatorCount) || 0),
       clicks,
+      cooldownUpgradeLevel,
       level: lvlInfo.level,
       xp: lvlInfo.totalXp,
       currentLevelXp: lvlInfo.currentLevelXp,
@@ -279,6 +312,7 @@ class ZoriiEngine {
       prev.count !== updated.count ||
       prev.spectatorCount !== updated.spectatorCount ||
       prev.clicks !== updated.clicks ||
+      prev.cooldownUpgradeLevel !== updated.cooldownUpgradeLevel ||
       prev.xp !== updated.xp ||
       prev.level !== updated.level ||
       prev.max !== updated.max ||
@@ -333,12 +367,17 @@ class ZoriiEngine {
   _publishRoomRegistry(room) {
     if (!room || !room.id) return;
     const clicks = Math.max(0, Math.floor(Number(room.clicks) || 0));
+    const cooldownUpgradeLevel = Math.min(
+      10,
+      Math.max(0, Math.floor(Number(room.cooldownUpgradeLevel) || 0))
+    );
     const xp = Math.max(Math.floor(clicks / 100), Number(room.xp) || 0);
     const lvlInfo = this.computeRoomLevel(xp);
     const payloadObj = {
       ...room,
       spectatorCount: Math.max(0, Number(room.spectatorCount) || 0),
       clicks,
+      cooldownUpgradeLevel,
       level: lvlInfo.level,
       xp: lvlInfo.totalXp,
       currentLevelXp: lvlInfo.currentLevelXp,
@@ -394,6 +433,10 @@ class ZoriiEngine {
         .filter((r) => r && r.id && r.name)
         .map((r) => {
           const clicks = Math.max(0, Math.floor(Number(r.clicks) || 0));
+          const cooldownUpgradeLevel = Math.min(
+            10,
+            Math.max(0, Math.floor(Number(r.cooldownUpgradeLevel) || 0))
+          );
           const xpVal = Math.max(Math.floor(clicks / 100), Math.max(0, Math.floor(Number(r.xp) || 0)));
           const lvlInfo = this.computeRoomLevel(xpVal);
           return {
@@ -402,6 +445,7 @@ class ZoriiEngine {
             desc: r.desc || '',
             max: Math.min(this.cfg.MAX_MEMBERS, Math.max(this.cfg.MIN_MEMBERS, Number(r.max) || 25)),
             clicks,
+            cooldownUpgradeLevel,
             level: lvlInfo.level,
             xp: lvlInfo.totalXp,
             currentLevelXp: lvlInfo.currentLevelXp,
@@ -421,15 +465,20 @@ class ZoriiEngine {
   saveCurrentRoomStats() {
     if (this.role !== 'host' || !this.activeRoom) return null;
     const clicks = Math.max(0, Math.floor(Number(this.activeRoom.clicks) || 0));
+    const cooldownUpgradeLevel = Math.min(
+      10,
+      Math.max(0, Math.floor(Number(this.activeRoom.cooldownUpgradeLevel) || 0))
+    );
     const xpVal = Math.max(Math.floor(clicks / 100), Math.max(0, Math.floor(Number(this.activeRoom.xp) || 0)));
     const lvlInfo = this.computeRoomLevel(xpVal);
-    // Save ONLY room stats (id, name, desc, max, clicks, level, xp) — never messages or members
+    // Save ONLY room stats (id, name, desc, max, clicks, cooldownUpgradeLevel, level, xp) — never messages or members
     const savedEntry = {
       id: this.activeRoom.id,
       name: this.activeRoom.name,
       desc: this.activeRoom.desc || '',
       max: this.activeRoom.max,
       clicks,
+      cooldownUpgradeLevel,
       level: lvlInfo.level,
       xp: lvlInfo.totalXp,
       currentLevelXp: lvlInfo.currentLevelXp,
@@ -457,7 +506,7 @@ class ZoriiEngine {
   /* =========================================================
    * HOSTING A ROOM (YOUR COMPUTER IS THE SERVER)
    * ========================================================= */
-  hostRoom({ id, name, desc, max, xp, clicks }) {
+  hostRoom({ id, name, desc, max, xp, clicks, cooldownUpgradeLevel }) {
     if (this.isAnonymous || !this.isEmailVerified) {
       if (this.cb.onError) {
         this.cb.onError('Compte avec e-mail vérifié requis pour héberger une room');
@@ -472,6 +521,7 @@ class ZoriiEngine {
     );
     const roomId = (id && String(id).trim().toUpperCase()) || this._generateCode();
     const initialClicks = Math.max(0, Math.floor(Number(clicks) || 0));
+    const initialUpgradeLvl = Math.min(10, Math.max(0, Math.floor(Number(cooldownUpgradeLevel) || 0)));
     const initialXp = Math.max(Math.floor(initialClicks / 100), Math.max(0, Math.floor(Number(xp) || 0)));
     const lvlInfo = this.computeRoomLevel(initialXp);
 
@@ -487,6 +537,7 @@ class ZoriiEngine {
       count: 1,
       spectatorCount: 0,
       clicks: initialClicks,
+      cooldownUpgradeLevel: initialUpgradeLvl,
       level: lvlInfo.level,
       xp: lvlInfo.totalXp,
       currentLevelXp: lvlInfo.currentLevelXp,
@@ -496,6 +547,8 @@ class ZoriiEngine {
 
     this.members.clear();
     this.playerClicks.clear();
+    this.lastPlayerClickAt.clear();
+    this.lastLocalClickAt = 0;
     this.processedClickIds.clear();
     this.spectators.clear();
     this.playerClicks.set(this.clientId, 0);
@@ -588,6 +641,10 @@ class ZoriiEngine {
     this.activeRoom.count = this.members.size;
     this.activeRoom.spectatorCount = this.spectators.size;
     this.activeRoom.clicks = Math.max(0, Math.floor(Number(this.activeRoom.clicks) || 0));
+    this.activeRoom.cooldownUpgradeLevel = Math.min(
+      10,
+      Math.max(0, Math.floor(Number(this.activeRoom.cooldownUpgradeLevel) || 0))
+    );
     const lvlInfo = this.computeRoomLevel(this.activeRoom.xp);
     this.activeRoom.level = lvlInfo.level;
     this.activeRoom.xp = lvlInfo.totalXp;
@@ -739,7 +796,7 @@ class ZoriiEngine {
       return;
     }
 
-    // 2. Guest or Host clicks in Clicker Event (host-authoritative: every 100 clicks -> +1 room XP)
+    // 2. Guest or Host clicks in Clicker Event (host-authoritative: cooldown + every 100 clicks -> +1 room XP)
     if (payload.action === 'GUEST_CLICK') {
       const { clientId, clickId, isAnonymous } = payload;
       if (isAnonymous || !clientId || this.spectators.has(clientId) || !this.members.has(clientId)) {
@@ -755,6 +812,15 @@ class ZoriiEngine {
           this.processedClickIds.delete(oldest);
         }
       }
+
+      const { cooldownMs } = this.getCooldownUpgradeInfo();
+      const now = Date.now();
+      const prevClickAt = Number(this.lastPlayerClickAt.get(clientId)) || 0;
+      const minInterval = clientId === this.clientId ? cooldownMs : Math.max(0, cooldownMs - 45);
+      if (minInterval > 0 && now - prevClickAt < minInterval) {
+        return;
+      }
+      this.lastPlayerClickAt.set(clientId, now);
 
       const member = this.members.get(clientId);
       const nextMemberClicks =
@@ -883,6 +949,11 @@ class ZoriiEngine {
 
     this.activeRoom.spectatorCount = Math.max(0, Number(this.activeRoom.spectatorCount) || 0);
     this.activeRoom.clicks = Math.max(0, Math.floor(Number(this.activeRoom.clicks) || 0));
+    this.activeRoom.cooldownUpgradeLevel = Math.min(
+      10,
+      Math.max(0, Math.floor(Number(this.activeRoom.cooldownUpgradeLevel) || 0))
+    );
+    this.lastLocalClickAt = 0;
     const initLvl = this.computeRoomLevel(this.activeRoom.xp);
     this.activeRoom.level = initLvl.level;
     this.activeRoom.xp = initLvl.totalXp;
@@ -1080,12 +1151,17 @@ class ZoriiEngine {
     if (!snap || this.role !== 'guest' || !this.activeRoom) return;
     if (snap.room) {
       const clicks = Math.max(0, Math.floor(Number(snap.room.clicks) || 0));
+      const cooldownUpgradeLevel = Math.min(
+        10,
+        Math.max(0, Math.floor(Number(snap.room.cooldownUpgradeLevel) || 0))
+      );
       const xp = Math.max(Math.floor(clicks / 100), Number(snap.room.xp) || 0);
       const lvlInfo = this.computeRoomLevel(xp);
       this.activeRoom = {
         ...snap.room,
         spectatorCount: Math.max(0, Number(snap.room.spectatorCount) || 0),
         clicks,
+        cooldownUpgradeLevel,
         level: lvlInfo.level,
         xp: lvlInfo.totalXp,
         currentLevelXp: lvlInfo.currentLevelXp,
@@ -1128,13 +1204,27 @@ class ZoriiEngine {
   }
 
   /* =========================================================
-   * CLICKER EVENT, SENDING CHAT & LEAVING ROOM
+   * CLICKER EVENT, UPGRADES, SENDING CHAT & LEAVING ROOM
    * ========================================================= */
+  getRemainingCooldownMs() {
+    if (!this.activeRoom) return 0;
+    const { cooldownMs } = this.getCooldownUpgradeInfo();
+    if (cooldownMs <= 0 || !this.lastLocalClickAt) return 0;
+    return Math.max(0, cooldownMs - (Date.now() - this.lastLocalClickAt));
+  }
+
   sendClick() {
     if (this.isAnonymous || !this.activeRoom) return false;
 
+    const { cooldownMs } = this.getCooldownUpgradeInfo();
+    const now = Date.now();
+    if (cooldownMs > 0 && now - this.lastLocalClickAt < cooldownMs) {
+      return false;
+    }
+    this.lastLocalClickAt = now;
+
     const clickId =
-      'clk_' + this.clientId + '_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+      'clk_' + this.clientId + '_' + now + '_' + Math.random().toString(36).slice(2, 7);
 
     if (this.role === 'host') {
       this._hostProcessGuestAction({
@@ -1176,6 +1266,30 @@ class ZoriiEngine {
       this._emitRoomPacket(this.activeRoom.id, 'HOST', clickPkt);
     }
     return true;
+  }
+
+  buyCooldownUpgrade() {
+    if (this.role !== 'host' || !this.activeRoom) {
+      return { ok: false, reason: 'Only the host can buy upgrades' };
+    }
+    const info = this.getCooldownUpgradeInfo();
+    if (info.isMaxed) {
+      return { ok: false, reason: 'Cooldown upgrade is already maxed' };
+    }
+    const currentClicks = Math.max(0, Math.floor(Number(this.activeRoom.clicks) || 0));
+    if (currentClicks < info.nextCost) {
+      return { ok: false, reason: `Need ${info.nextCost.toLocaleString()} total clicks` };
+    }
+
+    this.activeRoom.clicks = currentClicks - info.nextCost;
+    this.activeRoom.cooldownUpgradeLevel = info.level + 1;
+    this._hostCommitState();
+
+    return {
+      ok: true,
+      level: this.activeRoom.cooldownUpgradeLevel,
+      info: this.getCooldownUpgradeInfo()
+    };
   }
 
   sendMessage(text) {
@@ -1281,6 +1395,8 @@ class ZoriiEngine {
     this.activeRoom = null;
     this.members.clear();
     this.playerClicks.clear();
+    this.lastPlayerClickAt.clear();
+    this.lastLocalClickAt = 0;
     this.processedClickIds.clear();
     this.spectators.clear();
     this.messages = [];

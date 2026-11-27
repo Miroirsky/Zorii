@@ -418,9 +418,10 @@
               <div id="event-view-clicker" class="event-view-body">
                 <div class="clicker-hero">
                   <button type="button" id="btn-room-clicker" class="btn-room-clicker">
+                    <div id="clicker-cooldown-fill" class="clicker-cooldown-fill" style="width: 0%;"></div>
                     <span class="clicker-btn-sub">TOTAL ROOM CLICKS</span>
                     <span id="clicker-total-val" class="clicker-btn-total">0</span>
-                    <span class="clicker-btn-cta">CLICK!</span>
+                    <span id="clicker-btn-cta" class="clicker-btn-cta">CLICK! (1.0s)</span>
                   </button>
 
                   <div class="clicker-xp-card">
@@ -430,6 +431,29 @@
                     </div>
                     <div class="clicker-xp-track">
                       <div id="clicker-xp-fill" class="clicker-xp-fill" style="width: 0%;"></div>
+                    </div>
+                  </div>
+
+                  <!-- Clicker Upgrades (Host Only Purchase) -->
+                  <div class="clicker-upgrade-card">
+                    <div class="clicker-upgrade-top">
+                      <span class="clicker-upgrade-heading">Upgrades</span>
+                      <span id="clicker-upgrade-role-tag" class="clicker-upgrade-role-tag">Host Only</span>
+                    </div>
+                    <div class="clicker-upgrade-row">
+                      <div class="clicker-upgrade-info">
+                        <div class="clicker-upgrade-title-row">
+                          <span class="clicker-upgrade-name">Reduced Cooldown</span>
+                          <span id="upgrade-cd-level" class="clicker-upgrade-lvl">Lvl 0</span>
+                        </div>
+                        <div id="upgrade-cd-desc" class="clicker-upgrade-desc">
+                          -0.1s click cooldown (1.0s → 0.9s)
+                        </div>
+                      </div>
+                      <button type="button" id="btn-buy-cd-upgrade" class="btn-buy-upgrade">
+                        <span id="upgrade-cd-cost" class="upgrade-cost-val">1K</span>
+                        <span class="upgrade-cost-unit">clicks</span>
+                      </button>
                     </div>
                   </div>
                 </div>

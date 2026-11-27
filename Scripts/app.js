@@ -122,15 +122,23 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnOpenClickerEvent = document.getElementById('btn-open-clicker-event');
   const eventBarClickerCount = document.getElementById('event-bar-clicker-count');
   const btnRoomClicker = document.getElementById('btn-room-clicker');
+  const clickerCooldownFill = document.getElementById('clicker-cooldown-fill');
   const clickerTotalVal = document.getElementById('clicker-total-val');
+  const clickerBtnCta = document.getElementById('clicker-btn-cta');
   const clickerXpProgressLabel = document.getElementById('clicker-xp-progress-label');
   const clickerXpFill = document.getElementById('clicker-xp-fill');
+  const clickerUpgradeRoleTag = document.getElementById('clicker-upgrade-role-tag');
+  const upgradeCdLevel = document.getElementById('upgrade-cd-level');
+  const upgradeCdDesc = document.getElementById('upgrade-cd-desc');
+  const btnBuyCdUpgrade = document.getElementById('btn-buy-cd-upgrade');
+  const upgradeCdCost = document.getElementById('upgrade-cd-cost');
   const clickerPlayersListEl = document.getElementById('clicker-players-list');
   const eventScaleBtns = document.querySelectorAll('.btn-event-scale');
   const toastEl = document.getElementById('toast');
 
   let activeEventId = null;
   let currentEventScaleRatio = 0.35;
+  let cooldownRafId = null;
 
   let toastTimer = null;
   let lastRenderedSignature = '';
@@ -324,9 +332,47 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  function formatCompactClicks(num) {
+    const n = Math.max(0, Math.floor(Number(num) || 0));
+    if (n >= 1e9) return `${Number((n / 1e9).toFixed(2))}B`;
+    if (n >= 1e6) return `${Number((n / 1e6).toFixed(2))}M`;
+    if (n >= 1e3) return `${Number((n / 1e3).toFixed(1))}K`;
+    return n.toLocaleString();
+  }
+
+  function updateCooldownButtonState() {
+    if (!btnRoomClicker) return;
+    const upInfo = p2p.getCooldownUpgradeInfo();
+    const remMs = p2p.getRemainingCooldownMs();
+
+    if (remMs > 0 && upInfo.cooldownMs > 0) {
+      btnRoomClicker.classList.add('on-cooldown');
+      const pct = Math.min(100, Math.max(0, (remMs / upInfo.cooldownMs) * 100));
+      if (clickerCooldownFill) {
+        clickerCooldownFill.style.width = `${pct}%`;
+      }
+      if (clickerBtnCta) {
+        clickerBtnCta.textContent = `${(remMs / 1000).toFixed(1)}s cooldown`;
+      }
+      cooldownRafId = requestAnimationFrame(updateCooldownButtonState);
+    } else {
+      btnRoomClicker.classList.remove('on-cooldown');
+      if (clickerCooldownFill) {
+        clickerCooldownFill.style.width = '0%';
+      }
+      if (clickerBtnCta) {
+        clickerBtnCta.textContent =
+          upInfo.cooldownSec > 0 ? `CLICK! (${upInfo.cooldownSec.toFixed(1)}s)` : 'CLICK! (0s)';
+      }
+      cooldownRafId = null;
+    }
+  }
+
   function updateClickerEventUI(room, members) {
     const totalClicks = Math.max(0, Math.floor(Number(room && room.clicks) || 0));
     const cycleClicks = totalClicks % 100;
+    const upInfo = p2p.getCooldownUpgradeInfo(room && room.cooldownUpgradeLevel);
+    const isHost = p2p.role === 'host';
 
     if (clickerTotalVal) {
       clickerTotalVal.textContent = totalClicks.toLocaleString();
@@ -339,6 +385,34 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     if (clickerXpFill) {
       clickerXpFill.style.width = `${cycleClicks}%`;
+    }
+
+    if (upgradeCdLevel) {
+      upgradeCdLevel.textContent = `Lvl ${upInfo.level}`;
+    }
+    if (upgradeCdDesc) {
+      upgradeCdDesc.textContent = upInfo.isMaxed
+        ? 'Max level reached (0.0s cooldown)'
+        : `-0.1s click cooldown (${upInfo.cooldownSec.toFixed(1)}s → ${upInfo.nextCooldownSec.toFixed(1)}s)`;
+    }
+    if (upgradeCdCost) {
+      upgradeCdCost.textContent = upInfo.isMaxed ? 'MAX' : formatCompactClicks(upInfo.nextCost);
+    }
+    if (clickerUpgradeRoleTag) {
+      clickerUpgradeRoleTag.textContent = isHost ? 'Host Controls' : 'Host Only';
+    }
+    if (btnBuyCdUpgrade) {
+      const canBuy = isHost && !upInfo.isMaxed && totalClicks >= upInfo.nextCost;
+      btnBuyCdUpgrade.disabled = !canBuy;
+      btnBuyCdUpgrade.title = !isHost
+        ? 'Only the host can buy upgrades'
+        : upInfo.isMaxed
+        ? 'Cooldown upgrade maxed'
+        : `Buy for ${upInfo.nextCost.toLocaleString()} total clicks (5x cost per level)`;
+    }
+
+    if (!cooldownRafId) {
+      updateCooldownButtonState();
     }
 
     if (!clickerPlayersListEl) return;
@@ -1541,7 +1615,8 @@ document.addEventListener('DOMContentLoaded', () => {
           desc: sr.desc,
           max: sr.max,
           xp: sr.xp,
-          clicks: sr.clicks
+          clicks: sr.clicks,
+          cooldownUpgradeLevel: sr.cooldownUpgradeLevel
         });
       });
 
@@ -1663,9 +1738,33 @@ document.addEventListener('DOMContentLoaded', () => {
         showToast('Spectateur anonyme : impossible de cliquer');
         return;
       }
-      p2p.sendClick();
+      if (p2p.getRemainingCooldownMs() > 0) {
+        return;
+      }
+      const clicked = p2p.sendClick();
+      if (!clicked) return;
       btnRoomClicker.classList.add('pulse');
       setTimeout(() => btnRoomClicker.classList.remove('pulse'), 90);
+      if (cooldownRafId) cancelAnimationFrame(cooldownRafId);
+      updateCooldownButtonState();
+    });
+  }
+
+  if (btnBuyCdUpgrade) {
+    btnBuyCdUpgrade.addEventListener('click', () => {
+      if (p2p.role !== 'host') {
+        showToast('Only the host can buy upgrades');
+        return;
+      }
+      const res = p2p.buyCooldownUpgrade();
+      if (!res.ok) {
+        if (res.reason) showToast(res.reason);
+        return;
+      }
+      showToast(
+        `Upgrade Lvl ${res.level}! Cooldown reduced to ${res.info.cooldownSec.toFixed(1)}s`
+      );
+      updateCooldownButtonState();
     });
   }
 

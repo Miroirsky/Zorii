@@ -1754,8 +1754,10 @@ input[type="range"]::-webkit-slider-thumb {
 }
 
 .btn-room-clicker {
+  position: relative;
+  overflow: hidden;
   width: 100%;
-  padding: 20px 16px;
+  padding: 18px 16px;
   border-radius: var(--radius);
   background: radial-gradient(circle at 50% 0%, rgba(168, 85, 247, 0.35), rgba(139, 92, 246, 0.14) 70%), var(--surface-2);
   border: 2px solid var(--purple);
@@ -1765,9 +1767,38 @@ input[type="range"]::-webkit-slider-thumb {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 5px;
   transition: transform 0.08s ease, box-shadow 0.15s ease, border-color 0.15s ease, background 0.15s ease;
   user-select: none;
+}
+
+.clicker-cooldown-fill {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  top: 0;
+  width: 0%;
+  background: linear-gradient(90deg, rgba(139, 92, 246, 0.26), rgba(168, 85, 247, 0.42));
+  pointer-events: none;
+  z-index: 0;
+}
+
+.btn-room-clicker > span {
+  position: relative;
+  z-index: 1;
+}
+
+.btn-room-clicker.on-cooldown {
+  border-color: rgba(139, 92, 246, 0.45);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+  cursor: wait;
+}
+
+.btn-room-clicker.on-cooldown .clicker-btn-cta {
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  color: #c4b5fd;
+  box-shadow: none;
 }
 
 .btn-room-clicker:hover:not(:disabled) {
@@ -1859,6 +1890,132 @@ input[type="range"]::-webkit-slider-thumb {
   background: linear-gradient(90deg, var(--purple), var(--purple-bright), #e879f9);
   border-radius: 999px;
   transition: width 0.2s ease;
+}
+
+/* Clicker Upgrades Card (Host Only Purchase) */
+.clicker-upgrade-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.clicker-upgrade-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.clicker-upgrade-heading {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+}
+
+.clicker-upgrade-role-tag {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.65rem;
+  font-weight: 600;
+  color: #c4b5fd;
+  background: var(--purple-soft);
+  border: 1px solid var(--border);
+  padding: 1px 7px;
+  border-radius: 999px;
+}
+
+.clicker-upgrade-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.clicker-upgrade-info {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.clicker-upgrade-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.clicker-upgrade-name {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.clicker-upgrade-lvl {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: #fff;
+  background: linear-gradient(135deg, var(--purple), var(--purple-bright));
+  padding: 1px 7px;
+  border-radius: 999px;
+}
+
+.clicker-upgrade-desc {
+  font-size: 0.72rem;
+  color: var(--text-dim);
+}
+
+.btn-buy-upgrade {
+  padding: 6px 11px;
+  border-radius: 8px;
+  background: var(--purple);
+  border: 1px solid var(--purple-bright);
+  color: #fff;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 72px;
+  flex-shrink: 0;
+  transition: background 0.15s ease, opacity 0.15s ease, transform 0.1s ease;
+}
+
+.btn-buy-upgrade:hover:not(:disabled) {
+  background: var(--purple-bright);
+}
+
+.btn-buy-upgrade:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.btn-buy-upgrade:disabled {
+  background: var(--surface-2);
+  border-color: var(--border);
+  color: var(--text-dim);
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.upgrade-cost-val {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.upgrade-cost-unit {
+  font-size: 0.64rem;
+  opacity: 0.85;
 }
 
 .clicker-players-section {
