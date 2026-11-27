@@ -105,6 +105,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const roomCodeText = document.getElementById('room-code-text');
   const btnSaveRoom = document.getElementById('btn-save-room');
   const btnCopyCode = document.getElementById('btn-copy-code');
+  const btnToggleUsersSidebar = document.getElementById('btn-toggle-users-sidebar');
+  const roomBarUsersCount = document.getElementById('room-bar-users-count');
   const btnLeaveRoom = document.getElementById('btn-leave-room');
   const chatMessagesEl = document.getElementById('chat-messages');
   const formChat = document.getElementById('form-chat');
@@ -113,6 +115,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const roomLevelValEl = document.getElementById('room-level-val');
   const roomXpFillEl = document.getElementById('room-xp-fill');
   const roomXpTextEl = document.getElementById('room-xp-text');
+  const usersSidebarEl = document.querySelector('.users-sidebar');
   const usersCountEl = document.getElementById('users-count');
   const spectatorsCountEl = document.getElementById('spectators-count');
   const usersListEl = document.getElementById('users-list');
@@ -123,6 +126,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const eventBarClickerCount = document.getElementById('event-bar-clicker-count');
   const btnRoomClicker = document.getElementById('btn-room-clicker');
   const clickerCooldownFill = document.getElementById('clicker-cooldown-fill');
+  const clickerFxLayer = document.getElementById('clicker-fx-layer');
   const clickerTotalVal = document.getElementById('clicker-total-val');
   const clickerBtnCta = document.getElementById('clicker-btn-cta');
   const clickerXpProgressLabel = document.getElementById('clicker-xp-progress-label');
@@ -286,16 +290,33 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  function syncUsersSidebarToggleUI() {
+    if (!btnToggleUsersSidebar || !usersSidebarEl) return;
+    const isVisible = getComputedStyle(usersSidebarEl).display !== 'none';
+    btnToggleUsersSidebar.classList.toggle('active', isVisible);
+  }
+
+  function computeClampedEventWidthPx(desiredPx, containerWidth) {
+    const twoThirdsPx = Math.floor(containerWidth * (2 / 3));
+    const usersVisible =
+      usersSidebarEl && getComputedStyle(usersSidebarEl).display !== 'none'
+        ? usersSidebarEl.offsetWidth || 210
+        : 0;
+    const safeMaxPx = Math.min(twoThirdsPx, Math.max(240, containerWidth - 74 - usersVisible - 160));
+    const minPx = Math.min(260, safeMaxPx);
+    return Math.min(safeMaxPx, Math.max(minPx, Math.round(desiredPx)));
+  }
+
   function applyEventTabWidthByRatio(ratio) {
     if (!eventTabPanel || !roomLayoutEl) return;
     const clampedRatio = Math.min(2 / 3, Math.max(0.24, Number(ratio) || 0.35));
     currentEventScaleRatio = clampedRatio;
+    roomLayoutEl.classList.toggle('event-wide', clampedRatio >= 0.45);
+
     const containerWidth = roomLayoutEl.clientWidth || window.innerWidth || 1080;
-    const maxPx = Math.floor(containerWidth * (2 / 3));
-    const minPx = 260;
-    const targetPx = Math.min(maxPx, Math.max(minPx, Math.round(containerWidth * clampedRatio)));
+    const targetPx = computeClampedEventWidthPx(containerWidth * clampedRatio, containerWidth);
     eventTabPanel.style.setProperty('--event-tab-width', `${targetPx}px`);
-    roomLayoutEl.classList.toggle('event-wide', clampedRatio >= 0.48);
+    syncUsersSidebarToggleUI();
 
     eventScaleBtns.forEach((btn) => {
       const btnScale = Number(btn.getAttribute('data-scale')) || 0;
@@ -330,6 +351,27 @@ document.addEventListener('DOMContentLoaded', () => {
     if (btnOpenClickerEvent) {
       btnOpenClickerEvent.classList.remove('active');
     }
+    syncUsersSidebarToggleUI();
+  }
+
+  function spawnClickerParticle(clickEvent, isXpMilestone) {
+    if (!clickerFxLayer || !btnRoomClicker) return;
+    const rect = btnRoomClicker.getBoundingClientRect();
+    let x = rect.width / 2 + (Math.random() * 44 - 22);
+    let y = rect.height / 2;
+    if (clickEvent && clickEvent.clientX && clickEvent.clientY) {
+      x = Math.min(rect.width - 24, Math.max(24, clickEvent.clientX - rect.left));
+      y = Math.min(rect.height - 16, Math.max(16, clickEvent.clientY - rect.top));
+    }
+    const el = document.createElement('span');
+    el.className = 'clicker-float-plus' + (isXpMilestone ? ' xp-bonus' : '');
+    el.textContent = isXpMilestone ? '+1 ⚡ +1 XP!' : '+1';
+    el.style.left = `${x}px`;
+    el.style.top = `${y}px`;
+    clickerFxLayer.appendChild(el);
+    setTimeout(() => {
+      if (el.parentNode) el.parentNode.removeChild(el);
+    }, 660);
   }
 
   function formatCompactClicks(num) {
@@ -426,15 +468,28 @@ document.addEventListener('DOMContentLoaded', () => {
       return ((a && a.name) || '').localeCompare((b && b.name) || '', undefined, { sensitivity: 'base' });
     });
 
+    const sumPlayerClicks = sortedMembers.reduce(
+      (acc, m) => acc + Math.max(0, Math.floor(Number(m && m.clicks) || 0)),
+      0
+    );
+
     sortedMembers.forEach((m, index) => {
       const li = document.createElement('li');
       li.className = 'clicker-player-row';
+
+      const playerClicks = Math.max(0, Math.floor(Number(m.clicks) || 0));
+      const sharePct = sumPlayerClicks > 0 ? Math.min(100, Math.round((playerClicks / sumPlayerClicks) * 100)) : 0;
+
+      const shareBar = document.createElement('div');
+      shareBar.className = 'clicker-player-share-bar';
+      shareBar.style.width = `${sharePct}%`;
+      li.appendChild(shareBar);
 
       const left = document.createElement('div');
       left.className = 'clicker-player-left';
 
       const rank = document.createElement('span');
-      rank.className = 'clicker-player-rank';
+      rank.className = 'clicker-player-rank' + (index < 3 && playerClicks > 0 ? ` top-${index + 1}` : '');
       rank.textContent = `#${index + 1}`;
 
       const userColor = m.color || cfg.USER_COLORS[0];
@@ -467,7 +522,6 @@ document.addEventListener('DOMContentLoaded', () => {
         right.appendChild(tag);
       }
 
-      const playerClicks = Math.max(0, Math.floor(Number(m.clicks) || 0));
       const countBadge = document.createElement('span');
       countBadge.className = 'clicker-player-count';
       countBadge.textContent = `${playerClicks.toLocaleString()} ${playerClicks === 1 ? 'click' : 'clicks'}`;
@@ -828,10 +882,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
       // Render connected members list + separate spectator count
       usersCountEl.textContent = `${latestMembers.length} / ${room.max}`;
+      if (roomBarUsersCount) {
+        roomBarUsersCount.textContent = `${latestMembers.length}`;
+      }
       if (spectatorsCountEl) {
         spectatorsCountEl.textContent = Number(room.spectatorCount) || 0;
       }
       renderRoomMembersList(latestMembers);
+      syncUsersSidebarToggleUI();
 
       // Render messages efficiently
       if (messages.length < renderedMsgCount) {
@@ -947,7 +1005,7 @@ document.addEventListener('DOMContentLoaded', () => {
       filtered
         .map((r) => {
           const lvl = p2p.computeRoomLevel(r.xp).level;
-          return `${r.id}:${r.name}:${r.desc}:${r.hostName}:${r.count}:${r.spectatorCount || 0}:${r.max}:${r.xp || 0}:${lvl}`;
+          return `${r.id}:${r.name}:${r.desc}:${r.hostName}:${r.count}:${r.spectatorCount || 0}:${r.clicks || 0}:${r.max}:${r.xp || 0}:${lvl}`;
         })
         .join('|');
 
@@ -1006,6 +1064,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const rightWrap = document.createElement('div');
       rightWrap.className = 'room-item-right';
+
+      const roomClicks = Math.max(0, Math.floor(Number(r.clicks) || 0));
+      if (roomClicks > 0) {
+        const clicksPill = document.createElement('div');
+        clicksPill.className = 'room-item-spectators';
+        clicksPill.title = 'Total Room Clicks';
+        clicksPill.textContent = `⚡ ${formatCompactClicks(roomClicks)}`;
+        rightWrap.appendChild(clicksPill);
+      }
 
       const specCount = Number(r.spectatorCount) || 0;
       const specBadge = document.createElement('div');
@@ -1698,12 +1765,12 @@ document.addEventListener('DOMContentLoaded', () => {
       const roomRect = roomLayoutEl.getBoundingClientRect();
       if (!roomRect.width) return;
       const rawWidth = roomRect.right - e.clientX;
-      const maxPx = Math.floor(roomRect.width * (2 / 3));
-      const minPx = 260;
-      const clampedPx = Math.min(maxPx, Math.max(minPx, Math.round(rawWidth)));
+      const tentativeRatio = Math.min(2 / 3, Math.max(0.24, rawWidth / roomRect.width));
+      roomLayoutEl.classList.toggle('event-wide', tentativeRatio >= 0.45);
+      const clampedPx = computeClampedEventWidthPx(rawWidth, roomRect.width);
       currentEventScaleRatio = clampedPx / roomRect.width;
       eventTabPanel.style.setProperty('--event-tab-width', `${clampedPx}px`);
-      roomLayoutEl.classList.toggle('event-wide', currentEventScaleRatio >= 0.48);
+      syncUsersSidebarToggleUI();
 
       eventScaleBtns.forEach((btn) => {
         const btnScale = Number(btn.getAttribute('data-scale')) || 0;
@@ -1732,8 +1799,26 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
+  if (btnToggleUsersSidebar && usersSidebarEl) {
+    btnToggleUsersSidebar.addEventListener('click', () => {
+      const currentlyVisible = getComputedStyle(usersSidebarEl).display !== 'none';
+      if (currentlyVisible) {
+        usersSidebarEl.classList.add('collapsed');
+        usersSidebarEl.classList.remove('force-show');
+      } else {
+        usersSidebarEl.classList.remove('collapsed');
+        usersSidebarEl.classList.add('force-show');
+      }
+      if (activeEventId) {
+        applyEventTabWidthByRatio(currentEventScaleRatio);
+      } else {
+        syncUsersSidebarToggleUI();
+      }
+    });
+  }
+
   if (btnRoomClicker) {
-    btnRoomClicker.addEventListener('click', () => {
+    btnRoomClicker.addEventListener('click', (e) => {
       if (p2p.isAnonymous) {
         showToast('Spectateur anonyme : impossible de cliquer');
         return;
@@ -1743,6 +1828,9 @@ document.addEventListener('DOMContentLoaded', () => {
       }
       const clicked = p2p.sendClick();
       if (!clicked) return;
+      const newClicks = Math.max(0, Math.floor(Number(p2p.activeRoom && p2p.activeRoom.clicks) || 0));
+      const isMilestone = newClicks > 0 && newClicks % 100 === 0;
+      spawnClickerParticle(e, isMilestone);
       btnRoomClicker.classList.add('pulse');
       setTimeout(() => btnRoomClicker.classList.remove('pulse'), 90);
       if (cooldownRafId) cancelAnimationFrame(cooldownRafId);

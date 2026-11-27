@@ -41,12 +41,14 @@ class ZoriiEngine {
     this.playerClicks = new Map(); // clientId -> number (host-authoritative session clicks)
     this.lastPlayerClickAt = new Map(); // clientId -> timestamp ms (host cooldown enforcement)
     this.lastLocalClickAt = 0;
+    this.lastAppliedSnapshotAt = 0;
     this.processedClickIds = new Set(); // clickId deduplication on host
     this.spectators = new Map(); // clientId -> lastSeenMs (invisible anonymous spectators)
     this.messages = [];
 
     // WebRTC PeerJS instances
     this.peer = null;
+    this.hostWebRtcRetryTimer = null;
     this.hostWebRtcConns = new Map();
     this.hostWebRtcSpectatorConns = new Map();
     this.guestWebRtcConn = null;
@@ -549,6 +551,7 @@ class ZoriiEngine {
     this.playerClicks.clear();
     this.lastPlayerClickAt.clear();
     this.lastLocalClickAt = 0;
+    this.lastAppliedSnapshotAt = 0;
     this.processedClickIds.clear();
     this.spectators.clear();
     this.playerClicks.set(this.clientId, 0);
@@ -613,6 +616,7 @@ class ZoriiEngine {
 
   _startHostWebRTC(roomId) {
     if (typeof Peer === 'undefined') return;
+    clearTimeout(this.hostWebRtcRetryTimer);
     try {
       this.peer = new Peer(this.cfg.APP_PREFIX + roomId, {
         config: { iceServers: this.cfg.ICE_SERVERS }
@@ -633,7 +637,25 @@ class ZoriiEngine {
         });
       });
 
-      this.peer.on('error', () => {});
+      this.peer.on('error', (err) => {
+        if (
+          err &&
+          err.type === 'unavailable-id' &&
+          this.role === 'host' &&
+          this.activeRoom &&
+          this.activeRoom.id === roomId
+        ) {
+          try {
+            this.peer.destroy();
+          } catch (_) {}
+          this.peer = null;
+          this.hostWebRtcRetryTimer = setTimeout(() => {
+            if (this.role === 'host' && this.activeRoom && this.activeRoom.id === roomId) {
+              this._startHostWebRTC(roomId);
+            }
+          }, 2600);
+        }
+      });
     } catch (_) {}
   }
 
@@ -816,11 +838,16 @@ class ZoriiEngine {
       const { cooldownMs } = this.getCooldownUpgradeInfo();
       const now = Date.now();
       const prevClickAt = Number(this.lastPlayerClickAt.get(clientId)) || 0;
-      const minInterval = clientId === this.clientId ? cooldownMs : Math.max(0, cooldownMs - 45);
-      if (minInterval > 0 && now - prevClickAt < minInterval) {
-        return;
+      if (cooldownMs > 0 && prevClickAt > 0) {
+        const earliestAllowed = prevClickAt + cooldownMs;
+        const jitterTolerance = clientId === this.clientId ? 0 : 350;
+        if (now < earliestAllowed - jitterTolerance) {
+          return;
+        }
+        this.lastPlayerClickAt.set(clientId, Math.max(now, earliestAllowed));
+      } else {
+        this.lastPlayerClickAt.set(clientId, now);
       }
-      this.lastPlayerClickAt.set(clientId, now);
 
       const member = this.members.get(clientId);
       const nextMemberClicks =
@@ -925,11 +952,18 @@ class ZoriiEngine {
     }
 
     const knownMeta = this.rooms.get(roomId);
-    const localSnap = this._readLocalSnapshot(roomId);
+    const rawLocalSnap = this._readLocalSnapshot(roomId);
+    const localSnap =
+      rawLocalSnap &&
+      rawLocalSnap.updatedAt &&
+      Date.now() - rawLocalSnap.updatedAt < this.cfg.ROOM_TTL_MS
+        ? rawLocalSnap
+        : null;
 
     this.leaveRoom();
 
     this.role = 'guest';
+    this.lastAppliedSnapshotAt = (localSnap && Number(localSnap.updatedAt)) || 0;
     this.activeRoom = (localSnap && localSnap.room)
       ? { ...localSnap.room }
       : knownMeta
@@ -1064,10 +1098,17 @@ class ZoriiEngine {
       tickCount++;
 
       const snap = this._readLocalSnapshot(roomId);
-      if (snap && snap.members) {
+      if (
+        snap &&
+        snap.members &&
+        snap.updatedAt &&
+        Date.now() - snap.updatedAt < this.cfg.ROOM_TTL_MS
+      ) {
         if (this.isAnonymous || snap.members.some((m) => m.id === this.clientId)) {
           hostSynced = true;
-          this._guestApplySnapshot(snap);
+          if (snap.updatedAt > this.lastAppliedSnapshotAt) {
+            this._guestApplySnapshot(snap);
+          }
         }
       }
 
@@ -1149,6 +1190,13 @@ class ZoriiEngine {
 
   _guestApplySnapshot(snap) {
     if (!snap || this.role !== 'guest' || !this.activeRoom) return;
+    const snapTime = Number(snap.updatedAt) || 0;
+    if (snapTime && this.lastAppliedSnapshotAt && snapTime < this.lastAppliedSnapshotAt) {
+      return;
+    }
+    if (snapTime) {
+      this.lastAppliedSnapshotAt = snapTime;
+    }
     if (snap.room) {
       const clicks = Math.max(0, Math.floor(Number(snap.room.clicks) || 0));
       const cooldownUpgradeLevel = Math.min(
@@ -1340,6 +1388,10 @@ class ZoriiEngine {
   }
 
   leaveRoom() {
+    if (this.hostWebRtcRetryTimer) {
+      clearTimeout(this.hostWebRtcRetryTimer);
+      this.hostWebRtcRetryTimer = null;
+    }
     if (this.heartbeatInterval) {
       clearInterval(this.heartbeatInterval);
       this.heartbeatInterval = null;
@@ -1397,6 +1449,7 @@ class ZoriiEngine {
     this.playerClicks.clear();
     this.lastPlayerClickAt.clear();
     this.lastLocalClickAt = 0;
+    this.lastAppliedSnapshotAt = 0;
     this.processedClickIds.clear();
     this.spectators.clear();
     this.messages = [];
