@@ -37,6 +37,7 @@ class ZoriiEngine {
     // Active room state
     this.role = null; // 'host' | 'guest' | null
     this.activeRoom = null; // { id, name, desc, max, hostId, hostName, count, spectatorCount, clicks, cooldownUpgradeLevel, level, xp, currentLevelXp, xpNeeded, updatedAt }
+    this.isRoomSaved = false; // true once host saves room (or loads from saved rooms) -> auto-saves on close
     this.members = new Map(); // clientId -> { id, name, color, isHost, clicks, joinedAt }
     this.playerClicks = new Map(); // clientId -> number (host-authoritative session clicks)
     this.lastPlayerClickAt = new Map(); // clientId -> timestamp ms (host cooldown enforcement)
@@ -127,6 +128,10 @@ class ZoriiEngine {
     this._initMqttBrokers();
 
     setInterval(() => this._pruneExpiredRooms(), 3000);
+
+    window.addEventListener('pagehide', () => {
+      this.leaveRoom();
+    });
 
     window.addEventListener('beforeunload', () => {
       this.leaveRoom();
@@ -464,8 +469,17 @@ class ZoriiEngine {
     }
   }
 
+  isCurrentRoomSaved() {
+    if (this.role !== 'host' || !this.activeRoom || !this.activeRoom.id) return false;
+    if (this.isRoomSaved) return true;
+    const found = this.getSavedRooms().some((r) => r.id === this.activeRoom.id);
+    if (found) this.isRoomSaved = true;
+    return found;
+  }
+
   saveCurrentRoomStats() {
     if (this.role !== 'host' || !this.activeRoom) return null;
+    this.isRoomSaved = true;
     const clicks = Math.max(0, Math.floor(Number(this.activeRoom.clicks) || 0));
     const cooldownUpgradeLevel = Math.min(
       10,
@@ -528,6 +542,7 @@ class ZoriiEngine {
     const lvlInfo = this.computeRoomLevel(initialXp);
 
     this.role = 'host';
+    this.isRoomSaved = this.getSavedRooms().some((r) => r.id === roomId);
     this.activeRoom = {
       id: roomId,
       name: (name || 'Room').trim(),
@@ -687,6 +702,9 @@ class ZoriiEngine {
     const snapshot = this._hostBuildSnapshot();
 
     this._hostSaveLocalSnapshot(snapshot);
+    if (this.isCurrentRoomSaved()) {
+      this.saveCurrentRoomStats();
+    }
     this._publishRoomRegistry(this.activeRoom);
 
     this._hostBroadcastToGuests({
@@ -1402,6 +1420,9 @@ class ZoriiEngine {
     }
 
     if (this.role === 'host' && this.activeRoom) {
+      if (this.isCurrentRoomSaved()) {
+        this.saveCurrentRoomStats();
+      }
       const rid = this.activeRoom.id;
       this._hostBroadcastToGuests({ action: 'HOST_CLOSED' });
       this._unpublishRoomRegistry(rid);
@@ -1445,6 +1466,7 @@ class ZoriiEngine {
 
     this.role = null;
     this.activeRoom = null;
+    this.isRoomSaved = false;
     this.members.clear();
     this.playerClicks.clear();
     this.lastPlayerClickAt.clear();

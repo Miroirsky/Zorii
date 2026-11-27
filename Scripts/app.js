@@ -280,6 +280,21 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  function syncSaveRoomButtonUI(isHost) {
+    if (!btnSaveRoom) return;
+    btnSaveRoom.classList.toggle('hidden', !isHost);
+    if (!isHost) return;
+    const isSaved = p2p.isCurrentRoomSaved();
+    btnSaveRoom.classList.toggle('active', isSaved);
+    const labelSpan = btnSaveRoom.querySelector('span');
+    if (labelSpan) {
+      labelSpan.textContent = isSaved ? 'Saved (Auto)' : 'Save';
+    }
+    btnSaveRoom.title = isSaved
+      ? 'Room is saved — automatically saves on closing'
+      : 'Save Room Stats (Levels, Clicks, Upgrades, Max Members)';
+  }
+
   function syncRoomSpectatorUI() {
     if (formChat && chatReadonlyNotice) {
       formChat.classList.toggle('hidden', p2p.isAnonymous);
@@ -839,9 +854,7 @@ document.addEventListener('DOMContentLoaded', () => {
       roomDescEl.textContent = room.desc || '';
       roomCodeText.textContent = room.id;
       roomHostTag.textContent = isHost ? 'Hosted on your PC' : `Host: ${room.hostName}`;
-      if (btnSaveRoom) {
-        btnSaveRoom.classList.toggle('hidden', !isHost);
-      }
+      syncSaveRoomButtonUI(isHost);
       if (spectatorsCountEl) {
         spectatorsCountEl.textContent = Number(room.spectatorCount) || 0;
       }
@@ -871,9 +884,7 @@ document.addEventListener('DOMContentLoaded', () => {
       roomDescEl.textContent = room.desc || '';
       roomCodeText.textContent = room.id;
       roomHostTag.textContent = isHost ? 'Hosted on your PC' : `Host: ${room.hostName}`;
-      if (btnSaveRoom) {
-        btnSaveRoom.classList.toggle('hidden', !isHost);
-      }
+      syncSaveRoomButtonUI(isHost);
 
       // Left vertical XP bar & Clicker Event state
       updateRoomXpUI(room.xp);
@@ -1860,8 +1871,9 @@ document.addEventListener('DOMContentLoaded', () => {
     btnSaveRoom.addEventListener('click', () => {
       const saved = p2p.saveCurrentRoomStats();
       if (saved) {
+        syncSaveRoomButtonUI(true);
         showToast(
-          `Saved room "${saved.name}" (Lvl ${saved.level}, ${saved.clicks.toLocaleString()} clicks, Max ${saved.max})`
+          `Saved room "${saved.name}" — auto-save on close enabled (Lvl ${saved.level}, ${saved.clicks.toLocaleString()} clicks)`
         );
       }
     });
@@ -1883,9 +1895,18 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   btnLeaveRoom.addEventListener('click', () => {
+    const autoSaved =
+      p2p.role === 'host' && p2p.activeRoom && p2p.isCurrentRoomSaved()
+        ? p2p.saveCurrentRoomStats()
+        : null;
     clearInterval(hostingHeartbeatTimer);
     social.setHostingRoom(null);
     p2p.leaveRoom();
+    if (autoSaved) {
+      showToast(
+        `Auto-saved room "${autoSaved.name}" (Lvl ${autoSaved.level}, ${autoSaved.clicks.toLocaleString()} clicks)`
+      );
+    }
     showView('view-menu');
   });
 
