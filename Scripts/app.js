@@ -98,6 +98,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const savedRoomsListEl = document.getElementById('saved-rooms-list');
 
   // Room / Chat
+  const roomLayoutEl = document.getElementById('room-layout');
   const roomTitleEl = document.getElementById('room-title');
   const roomDescEl = document.getElementById('room-desc');
   const roomHostTag = document.getElementById('room-host-tag');
@@ -115,7 +116,21 @@ document.addEventListener('DOMContentLoaded', () => {
   const usersCountEl = document.getElementById('users-count');
   const spectatorsCountEl = document.getElementById('spectators-count');
   const usersListEl = document.getElementById('users-list');
+  const eventTabPanel = document.getElementById('event-tab-panel');
+  const eventResizeHandle = document.getElementById('event-resize-handle');
+  const btnCloseEventTab = document.getElementById('btn-close-event-tab');
+  const btnOpenClickerEvent = document.getElementById('btn-open-clicker-event');
+  const eventBarClickerCount = document.getElementById('event-bar-clicker-count');
+  const btnRoomClicker = document.getElementById('btn-room-clicker');
+  const clickerTotalVal = document.getElementById('clicker-total-val');
+  const clickerXpProgressLabel = document.getElementById('clicker-xp-progress-label');
+  const clickerXpFill = document.getElementById('clicker-xp-fill');
+  const clickerPlayersListEl = document.getElementById('clicker-players-list');
+  const eventScaleBtns = document.querySelectorAll('.btn-event-scale');
   const toastEl = document.getElementById('toast');
+
+  let activeEventId = null;
+  let currentEventScaleRatio = 0.35;
 
   let toastTimer = null;
   let lastRenderedSignature = '';
@@ -258,6 +273,136 @@ document.addEventListener('DOMContentLoaded', () => {
       formChat.classList.toggle('hidden', p2p.isAnonymous);
       chatReadonlyNotice.classList.toggle('hidden', !p2p.isAnonymous);
     }
+    if (btnRoomClicker) {
+      btnRoomClicker.disabled = p2p.isAnonymous;
+    }
+  }
+
+  function applyEventTabWidthByRatio(ratio) {
+    if (!eventTabPanel || !roomLayoutEl) return;
+    const clampedRatio = Math.min(2 / 3, Math.max(0.24, Number(ratio) || 0.35));
+    currentEventScaleRatio = clampedRatio;
+    const containerWidth = roomLayoutEl.clientWidth || window.innerWidth || 1080;
+    const maxPx = Math.floor(containerWidth * (2 / 3));
+    const minPx = 260;
+    const targetPx = Math.min(maxPx, Math.max(minPx, Math.round(containerWidth * clampedRatio)));
+    eventTabPanel.style.setProperty('--event-tab-width', `${targetPx}px`);
+    roomLayoutEl.classList.toggle('event-wide', clampedRatio >= 0.48);
+
+    eventScaleBtns.forEach((btn) => {
+      const btnScale = Number(btn.getAttribute('data-scale')) || 0;
+      btn.classList.toggle('active', Math.abs(btnScale - clampedRatio) < 0.045);
+    });
+  }
+
+  function openEventTab(eventId) {
+    activeEventId = eventId;
+    if (eventTabPanel) {
+      eventTabPanel.classList.remove('hidden');
+    }
+    if (roomLayoutEl) {
+      roomLayoutEl.classList.add('event-open');
+    }
+    if (btnOpenClickerEvent) {
+      btnOpenClickerEvent.classList.toggle('active', eventId === 'clicker');
+    }
+    requestAnimationFrame(() => {
+      applyEventTabWidthByRatio(currentEventScaleRatio);
+    });
+  }
+
+  function closeEventTab() {
+    activeEventId = null;
+    if (eventTabPanel) {
+      eventTabPanel.classList.add('hidden');
+    }
+    if (roomLayoutEl) {
+      roomLayoutEl.classList.remove('event-open', 'event-wide');
+    }
+    if (btnOpenClickerEvent) {
+      btnOpenClickerEvent.classList.remove('active');
+    }
+  }
+
+  function updateClickerEventUI(room, members) {
+    const totalClicks = Math.max(0, Math.floor(Number(room && room.clicks) || 0));
+    const cycleClicks = totalClicks % 100;
+
+    if (clickerTotalVal) {
+      clickerTotalVal.textContent = totalClicks.toLocaleString();
+    }
+    if (eventBarClickerCount) {
+      eventBarClickerCount.textContent = `${totalClicks.toLocaleString()} ${totalClicks === 1 ? 'click' : 'clicks'}`;
+    }
+    if (clickerXpProgressLabel) {
+      clickerXpProgressLabel.textContent = `${cycleClicks} / 100`;
+    }
+    if (clickerXpFill) {
+      clickerXpFill.style.width = `${cycleClicks}%`;
+    }
+
+    if (!clickerPlayersListEl) return;
+    clickerPlayersListEl.innerHTML = '';
+
+    const sortedMembers = [...(members || [])].sort((a, b) => {
+      const ca = Math.max(0, Math.floor(Number(a && a.clicks) || 0));
+      const cb = Math.max(0, Math.floor(Number(b && b.clicks) || 0));
+      if (cb !== ca) return cb - ca;
+      if (Boolean(b && b.isHost) !== Boolean(a && a.isHost)) return b && b.isHost ? 1 : -1;
+      return ((a && a.name) || '').localeCompare((b && b.name) || '', undefined, { sensitivity: 'base' });
+    });
+
+    sortedMembers.forEach((m, index) => {
+      const li = document.createElement('li');
+      li.className = 'clicker-player-row';
+
+      const left = document.createElement('div');
+      left.className = 'clicker-player-left';
+
+      const rank = document.createElement('span');
+      rank.className = 'clicker-player-rank';
+      rank.textContent = `#${index + 1}`;
+
+      const userColor = m.color || cfg.USER_COLORS[0];
+      const dot = document.createElement('span');
+      dot.className = 'status-dot';
+      dot.style.backgroundColor = userColor;
+      dot.style.boxShadow = `0 0 8px ${userColor}`;
+
+      const nameEl = document.createElement('span');
+      nameEl.className = 'clicker-player-name';
+      nameEl.style.color = userColor;
+      nameEl.textContent = m.name;
+
+      left.appendChild(rank);
+      left.appendChild(dot);
+      left.appendChild(nameEl);
+
+      const right = document.createElement('div');
+      right.className = 'clicker-player-right';
+
+      if (m.isHost) {
+        const tag = document.createElement('span');
+        tag.className = 'user-tag';
+        tag.textContent = 'Host';
+        right.appendChild(tag);
+      } else if (m.id === p2p.clientId) {
+        const tag = document.createElement('span');
+        tag.className = 'user-tag';
+        tag.textContent = 'You';
+        right.appendChild(tag);
+      }
+
+      const playerClicks = Math.max(0, Math.floor(Number(m.clicks) || 0));
+      const countBadge = document.createElement('span');
+      countBadge.className = 'clicker-player-count';
+      countBadge.textContent = `${playerClicks.toLocaleString()} ${playerClicks === 1 ? 'click' : 'clicks'}`;
+      right.appendChild(countBadge);
+
+      li.appendChild(left);
+      li.appendChild(right);
+      clickerPlayersListEl.appendChild(li);
+    });
   }
 
   let latestMembers = [];
@@ -574,6 +719,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
       syncRoomSpectatorUI();
       updateRoomXpUI(room.xp);
+      updateClickerEventUI(room, Array.from(p2p.members.values()));
 
       clearInterval(hostingHeartbeatTimer);
       if (isHost) {
@@ -601,9 +747,10 @@ document.addEventListener('DOMContentLoaded', () => {
         btnSaveRoom.classList.toggle('hidden', !isHost);
       }
 
-      // Left vertical XP bar
+      // Left vertical XP bar & Clicker Event state
       updateRoomXpUI(room.xp);
       syncRoomSpectatorUI();
+      updateClickerEventUI(room, latestMembers);
 
       // Render connected members list + separate spectator count
       usersCountEl.textContent = `${latestMembers.length} / ${room.max}`;
@@ -1358,12 +1505,18 @@ document.addEventListener('DOMContentLoaded', () => {
       title.className = 'saved-room-name';
       title.textContent = sr.name;
 
+      const clicksBadge = document.createElement('span');
+      clicksBadge.className = 'room-item-host';
+      const savedClicks = Math.max(0, Math.floor(Number(sr.clicks) || 0));
+      clicksBadge.textContent = `⚡ ${savedClicks.toLocaleString()} clicks`;
+
       const meta = document.createElement('span');
       meta.className = 'room-item-host';
       meta.textContent = `Max ${sr.max}`;
 
       top.appendChild(lvl);
       top.appendChild(title);
+      top.appendChild(clicksBadge);
       top.appendChild(meta);
       info.appendChild(top);
 
@@ -1387,7 +1540,8 @@ document.addEventListener('DOMContentLoaded', () => {
           name: sr.name,
           desc: sr.desc,
           max: sr.max,
-          xp: sr.xp
+          xp: sr.xp,
+          clicks: sr.clicks
         });
       });
 
@@ -1428,12 +1582,100 @@ document.addEventListener('DOMContentLoaded', () => {
     hostDescInput.value = '';
   });
 
-  // 5. Room Chat & Save Room Stats
+  // 5. Room Chat, Events Bar, Resizable Event Tab & Save Room Stats
+  if (btnOpenClickerEvent) {
+    btnOpenClickerEvent.addEventListener('click', () => {
+      if (activeEventId === 'clicker') {
+        closeEventTab();
+      } else {
+        openEventTab('clicker');
+      }
+    });
+  }
+
+  if (btnCloseEventTab) {
+    btnCloseEventTab.addEventListener('click', () => {
+      closeEventTab();
+    });
+  }
+
+  eventScaleBtns.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const ratio = Number(btn.getAttribute('data-scale')) || 0.33;
+      applyEventTabWidthByRatio(ratio);
+    });
+  });
+
+  if (eventResizeHandle && eventTabPanel && roomLayoutEl) {
+    let isDraggingResize = false;
+
+    eventResizeHandle.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      isDraggingResize = true;
+      eventResizeHandle.classList.add('dragging');
+      try {
+        eventResizeHandle.setPointerCapture(e.pointerId);
+      } catch (_) {}
+    });
+
+    eventResizeHandle.addEventListener('pointermove', (e) => {
+      if (!isDraggingResize) return;
+      const roomRect = roomLayoutEl.getBoundingClientRect();
+      if (!roomRect.width) return;
+      const rawWidth = roomRect.right - e.clientX;
+      const maxPx = Math.floor(roomRect.width * (2 / 3));
+      const minPx = 260;
+      const clampedPx = Math.min(maxPx, Math.max(minPx, Math.round(rawWidth)));
+      currentEventScaleRatio = clampedPx / roomRect.width;
+      eventTabPanel.style.setProperty('--event-tab-width', `${clampedPx}px`);
+      roomLayoutEl.classList.toggle('event-wide', currentEventScaleRatio >= 0.48);
+
+      eventScaleBtns.forEach((btn) => {
+        const btnScale = Number(btn.getAttribute('data-scale')) || 0;
+        btn.classList.toggle('active', Math.abs(btnScale - currentEventScaleRatio) < 0.045);
+      });
+    });
+
+    const stopResizeDrag = (e) => {
+      if (!isDraggingResize) return;
+      isDraggingResize = false;
+      eventResizeHandle.classList.remove('dragging');
+      try {
+        if (e && e.pointerId !== undefined) {
+          eventResizeHandle.releasePointerCapture(e.pointerId);
+        }
+      } catch (_) {}
+    };
+
+    eventResizeHandle.addEventListener('pointerup', stopResizeDrag);
+    eventResizeHandle.addEventListener('pointercancel', stopResizeDrag);
+  }
+
+  window.addEventListener('resize', () => {
+    if (activeEventId) {
+      applyEventTabWidthByRatio(currentEventScaleRatio);
+    }
+  });
+
+  if (btnRoomClicker) {
+    btnRoomClicker.addEventListener('click', () => {
+      if (p2p.isAnonymous) {
+        showToast('Spectateur anonyme : impossible de cliquer');
+        return;
+      }
+      p2p.sendClick();
+      btnRoomClicker.classList.add('pulse');
+      setTimeout(() => btnRoomClicker.classList.remove('pulse'), 90);
+    });
+  }
+
   if (btnSaveRoom) {
     btnSaveRoom.addEventListener('click', () => {
       const saved = p2p.saveCurrentRoomStats();
       if (saved) {
-        showToast(`Saved room "${saved.name}" (Lvl ${saved.level}, Max ${saved.max})`);
+        showToast(
+          `Saved room "${saved.name}" (Lvl ${saved.level}, ${saved.clicks.toLocaleString()} clicks, Max ${saved.max})`
+        );
       }
     });
   }

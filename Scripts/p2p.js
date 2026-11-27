@@ -36,8 +36,10 @@ class ZoriiEngine {
 
     // Active room state
     this.role = null; // 'host' | 'guest' | null
-    this.activeRoom = null; // { id, name, desc, max, hostId, hostName, count, spectatorCount, level, xp, currentLevelXp, xpNeeded, updatedAt }
-    this.members = new Map(); // clientId -> { id, name, color, isHost, joinedAt }
+    this.activeRoom = null; // { id, name, desc, max, hostId, hostName, count, spectatorCount, clicks, level, xp, currentLevelXp, xpNeeded, updatedAt }
+    this.members = new Map(); // clientId -> { id, name, color, isHost, clicks, joinedAt }
+    this.playerClicks = new Map(); // clientId -> number (host-authoritative session clicks)
+    this.processedClickIds = new Set(); // clickId deduplication on host
     this.spectators = new Map(); // clientId -> lastSeenMs (invisible anonymous spectators)
     this.messages = [];
 
@@ -202,6 +204,7 @@ class ZoriiEngine {
             !prev ||
             prev.count !== r.count ||
             prev.spectatorCount !== r.spectatorCount ||
+            prev.clicks !== r.clicks ||
             prev.level !== r.level ||
             prev.xp !== r.xp ||
             prev.name !== r.name ||
@@ -255,11 +258,13 @@ class ZoriiEngine {
       return;
     }
     const prev = this.rooms.get(room.id);
-    const xp = Number(room.xp) || 0;
+    const clicks = Math.max(0, Math.floor(Number(room.clicks) || 0));
+    const xp = Math.max(Math.floor(clicks / 100), Number(room.xp) || 0);
     const lvlInfo = this.computeRoomLevel(xp);
     const updated = {
       ...room,
       spectatorCount: Math.max(0, Number(room.spectatorCount) || 0),
+      clicks,
       level: lvlInfo.level,
       xp: lvlInfo.totalXp,
       currentLevelXp: lvlInfo.currentLevelXp,
@@ -273,6 +278,7 @@ class ZoriiEngine {
       !prev ||
       prev.count !== updated.count ||
       prev.spectatorCount !== updated.spectatorCount ||
+      prev.clicks !== updated.clicks ||
       prev.xp !== updated.xp ||
       prev.level !== updated.level ||
       prev.max !== updated.max ||
@@ -326,11 +332,13 @@ class ZoriiEngine {
 
   _publishRoomRegistry(room) {
     if (!room || !room.id) return;
-    const xp = Number(room.xp) || 0;
+    const clicks = Math.max(0, Math.floor(Number(room.clicks) || 0));
+    const xp = Math.max(Math.floor(clicks / 100), Number(room.xp) || 0);
     const lvlInfo = this.computeRoomLevel(xp);
     const payloadObj = {
       ...room,
       spectatorCount: Math.max(0, Number(room.spectatorCount) || 0),
+      clicks,
       level: lvlInfo.level,
       xp: lvlInfo.totalXp,
       currentLevelXp: lvlInfo.currentLevelXp,
@@ -374,7 +382,7 @@ class ZoriiEngine {
   }
 
   /* =========================================================
-   * SAVED ROOM STATS (HOST PERSISTENCE: LEVELS, MAX MEMBERS — NO MESSAGES/MEMBERS)
+   * SAVED ROOM STATS (HOST PERSISTENCE: LEVELS, CLICKS, MAX MEMBERS — NO MESSAGES/MEMBERS)
    * ========================================================= */
   getSavedRooms() {
     try {
@@ -385,12 +393,15 @@ class ZoriiEngine {
       return arr
         .filter((r) => r && r.id && r.name)
         .map((r) => {
-          const lvlInfo = this.computeRoomLevel(r.xp);
+          const clicks = Math.max(0, Math.floor(Number(r.clicks) || 0));
+          const xpVal = Math.max(Math.floor(clicks / 100), Math.max(0, Math.floor(Number(r.xp) || 0)));
+          const lvlInfo = this.computeRoomLevel(xpVal);
           return {
             id: r.id,
             name: r.name,
             desc: r.desc || '',
             max: Math.min(this.cfg.MAX_MEMBERS, Math.max(this.cfg.MIN_MEMBERS, Number(r.max) || 25)),
+            clicks,
             level: lvlInfo.level,
             xp: lvlInfo.totalXp,
             currentLevelXp: lvlInfo.currentLevelXp,
@@ -409,13 +420,16 @@ class ZoriiEngine {
 
   saveCurrentRoomStats() {
     if (this.role !== 'host' || !this.activeRoom) return null;
-    const lvlInfo = this.computeRoomLevel(this.activeRoom.xp);
-    // Save ONLY room stats (id, name, desc, max, level, xp) — never messages or members
+    const clicks = Math.max(0, Math.floor(Number(this.activeRoom.clicks) || 0));
+    const xpVal = Math.max(Math.floor(clicks / 100), Math.max(0, Math.floor(Number(this.activeRoom.xp) || 0)));
+    const lvlInfo = this.computeRoomLevel(xpVal);
+    // Save ONLY room stats (id, name, desc, max, clicks, level, xp) — never messages or members
     const savedEntry = {
       id: this.activeRoom.id,
       name: this.activeRoom.name,
       desc: this.activeRoom.desc || '',
       max: this.activeRoom.max,
+      clicks,
       level: lvlInfo.level,
       xp: lvlInfo.totalXp,
       currentLevelXp: lvlInfo.currentLevelXp,
@@ -443,7 +457,7 @@ class ZoriiEngine {
   /* =========================================================
    * HOSTING A ROOM (YOUR COMPUTER IS THE SERVER)
    * ========================================================= */
-  hostRoom({ id, name, desc, max, xp }) {
+  hostRoom({ id, name, desc, max, xp, clicks }) {
     if (this.isAnonymous || !this.isEmailVerified) {
       if (this.cb.onError) {
         this.cb.onError('Compte avec e-mail vérifié requis pour héberger une room');
@@ -457,7 +471,8 @@ class ZoriiEngine {
       Math.max(this.cfg.MIN_MEMBERS, Number(max) || 25)
     );
     const roomId = (id && String(id).trim().toUpperCase()) || this._generateCode();
-    const initialXp = Math.max(0, Math.floor(Number(xp) || 0));
+    const initialClicks = Math.max(0, Math.floor(Number(clicks) || 0));
+    const initialXp = Math.max(Math.floor(initialClicks / 100), Math.max(0, Math.floor(Number(xp) || 0)));
     const lvlInfo = this.computeRoomLevel(initialXp);
 
     this.role = 'host';
@@ -471,6 +486,7 @@ class ZoriiEngine {
       hostColor: this.userColor,
       count: 1,
       spectatorCount: 0,
+      clicks: initialClicks,
       level: lvlInfo.level,
       xp: lvlInfo.totalXp,
       currentLevelXp: lvlInfo.currentLevelXp,
@@ -479,13 +495,17 @@ class ZoriiEngine {
     };
 
     this.members.clear();
+    this.playerClicks.clear();
+    this.processedClickIds.clear();
     this.spectators.clear();
+    this.playerClicks.set(this.clientId, 0);
     this.members.set(this.clientId, {
       id: this.clientId,
       name: this.username,
       color: this.userColor,
       isHost: true,
       isVerified: true,
+      clicks: 0,
       joinedAt: Date.now()
     });
 
@@ -567,6 +587,7 @@ class ZoriiEngine {
   _hostBuildSnapshot() {
     this.activeRoom.count = this.members.size;
     this.activeRoom.spectatorCount = this.spectators.size;
+    this.activeRoom.clicks = Math.max(0, Math.floor(Number(this.activeRoom.clicks) || 0));
     const lvlInfo = this.computeRoomLevel(this.activeRoom.xp);
     this.activeRoom.level = lvlInfo.level;
     this.activeRoom.xp = lvlInfo.totalXp;
@@ -690,12 +711,19 @@ class ZoriiEngine {
         this.hostWebRtcConns.set(clientId, webrtcConn);
       }
 
+      const prevPlayerClicks = Math.max(
+        0,
+        Math.floor(Number(this.playerClicks.get(clientId)) || (existing && Number(existing.clicks)) || 0)
+      );
+      this.playerClicks.set(clientId, prevPlayerClicks);
+
       this.members.set(clientId, {
         id: clientId,
         name: username,
         color: color || (existing && existing.color) || this.cfg.USER_COLORS[0],
         isHost: clientId === this.clientId,
         isVerified: clientId === this.clientId ? true : Boolean(payload.isVerified),
+        clicks: prevPlayerClicks,
         joinedAt: existing ? existing.joinedAt : Date.now()
       });
 
@@ -711,7 +739,44 @@ class ZoriiEngine {
       return;
     }
 
-    // 2. Guest sends chat message (blocked for anonymous spectators & non-members)
+    // 2. Guest or Host clicks in Clicker Event (host-authoritative: every 100 clicks -> +1 room XP)
+    if (payload.action === 'GUEST_CLICK') {
+      const { clientId, clickId, isAnonymous } = payload;
+      if (isAnonymous || !clientId || this.spectators.has(clientId) || !this.members.has(clientId)) {
+        return;
+      }
+      if (clickId) {
+        if (this.processedClickIds.has(clickId)) {
+          return;
+        }
+        this.processedClickIds.add(clickId);
+        if (this.processedClickIds.size > 2000) {
+          const oldest = this.processedClickIds.values().next().value;
+          this.processedClickIds.delete(oldest);
+        }
+      }
+
+      const member = this.members.get(clientId);
+      const nextMemberClicks =
+        Math.max(0, Math.floor(Number(this.playerClicks.get(clientId)) || Number(member.clicks) || 0)) + 1;
+      this.playerClicks.set(clientId, nextMemberClicks);
+      member.clicks = nextMemberClicks;
+
+      const prevRoomClicks = Math.max(0, Math.floor(Number(this.activeRoom.clicks) || 0));
+      const nextRoomClicks = prevRoomClicks + 1;
+      this.activeRoom.clicks = nextRoomClicks;
+
+      // Every 100 total room clicks awards +1 room XP
+      const xpGained = Math.floor(nextRoomClicks / 100) - Math.floor(prevRoomClicks / 100);
+      if (xpGained > 0) {
+        this.activeRoom.xp = Math.max(0, Math.floor(Number(this.activeRoom.xp) || 0)) + xpGained;
+      }
+
+      this._hostCommitState();
+      return;
+    }
+
+    // 3. Guest sends chat message (blocked for anonymous spectators & non-members)
     if (payload.action === 'GUEST_CHAT') {
       const { clientId, color, text, msgId, isAnonymous } = payload;
       if (isAnonymous || !clientId || this.spectators.has(clientId) || !this.members.has(clientId)) {
@@ -817,6 +882,7 @@ class ZoriiEngine {
         };
 
     this.activeRoom.spectatorCount = Math.max(0, Number(this.activeRoom.spectatorCount) || 0);
+    this.activeRoom.clicks = Math.max(0, Math.floor(Number(this.activeRoom.clicks) || 0));
     const initLvl = this.computeRoomLevel(this.activeRoom.xp);
     this.activeRoom.level = initLvl.level;
     this.activeRoom.xp = initLvl.totalXp;
@@ -840,7 +906,12 @@ class ZoriiEngine {
 
     this.members.clear();
     if (localSnap && Array.isArray(localSnap.members)) {
-      localSnap.members.forEach((m) => this.members.set(m.id, m));
+      localSnap.members.forEach((m) =>
+        this.members.set(m.id, {
+          ...m,
+          clicks: Math.max(0, Math.floor(Number(m.clicks) || 0))
+        })
+      );
     } else {
       const hid = this.activeRoom.hostId || ('host_' + roomId);
       this.members.set(hid, {
@@ -848,18 +919,21 @@ class ZoriiEngine {
         name: this.activeRoom.hostName || 'Host',
         color: this.activeRoom.hostColor || this.cfg.USER_COLORS[0],
         isHost: true,
-        isVerified: true
+        isVerified: true,
+        clicks: 0
       });
     }
 
     // Anonymous spectators are invisible and never added to members
     if (!this.isAnonymous) {
+      const existingMe = this.members.get(this.clientId);
       this.members.set(this.clientId, {
         id: this.clientId,
         name: this.username,
         color: this.userColor,
         isHost: false,
-        isVerified: this.isEmailVerified
+        isVerified: this.isEmailVerified,
+        clicks: existingMe ? Math.max(0, Math.floor(Number(existingMe.clicks) || 0)) : 0
       });
     } else {
       this.activeRoom.spectatorCount = Math.max(1, this.activeRoom.spectatorCount);
@@ -1005,11 +1079,13 @@ class ZoriiEngine {
   _guestApplySnapshot(snap) {
     if (!snap || this.role !== 'guest' || !this.activeRoom) return;
     if (snap.room) {
-      const xp = Number(snap.room.xp) || 0;
+      const clicks = Math.max(0, Math.floor(Number(snap.room.clicks) || 0));
+      const xp = Math.max(Math.floor(clicks / 100), Number(snap.room.xp) || 0);
       const lvlInfo = this.computeRoomLevel(xp);
       this.activeRoom = {
         ...snap.room,
         spectatorCount: Math.max(0, Number(snap.room.spectatorCount) || 0),
+        clicks,
         level: lvlInfo.level,
         xp: lvlInfo.totalXp,
         currentLevelXp: lvlInfo.currentLevelXp,
@@ -1018,14 +1094,20 @@ class ZoriiEngine {
     }
     if (Array.isArray(snap.members)) {
       this.members.clear();
-      snap.members.forEach((m) => this.members.set(m.id, m));
+      snap.members.forEach((m) =>
+        this.members.set(m.id, {
+          ...m,
+          clicks: Math.max(0, Math.floor(Number(m.clicks) || 0))
+        })
+      );
       if (!this.isAnonymous && !this.members.has(this.clientId)) {
         this.members.set(this.clientId, {
           id: this.clientId,
           name: this.username,
           color: this.userColor,
           isHost: false,
-          isVerified: this.isEmailVerified
+          isVerified: this.isEmailVerified,
+          clicks: 0
         });
       }
     }
@@ -1046,8 +1128,56 @@ class ZoriiEngine {
   }
 
   /* =========================================================
-   * SENDING CHAT & LEAVING ROOM
+   * CLICKER EVENT, SENDING CHAT & LEAVING ROOM
    * ========================================================= */
+  sendClick() {
+    if (this.isAnonymous || !this.activeRoom) return false;
+
+    const clickId =
+      'clk_' + this.clientId + '_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+
+    if (this.role === 'host') {
+      this._hostProcessGuestAction({
+        action: 'GUEST_CLICK',
+        clientId: this.clientId,
+        clickId,
+        isAnonymous: false
+      });
+    } else if (this.role === 'guest') {
+      const prevClicks = Math.max(0, Math.floor(Number(this.activeRoom.clicks) || 0));
+      const nextClicks = prevClicks + 1;
+      this.activeRoom.clicks = nextClicks;
+      const xpGained = Math.floor(nextClicks / 100) - Math.floor(prevClicks / 100);
+      if (xpGained > 0) {
+        this.activeRoom.xp = Math.max(0, Math.floor(Number(this.activeRoom.xp) || 0)) + xpGained;
+        const lvlInfo = this.computeRoomLevel(this.activeRoom.xp);
+        this.activeRoom.level = lvlInfo.level;
+        this.activeRoom.xp = lvlInfo.totalXp;
+        this.activeRoom.currentLevelXp = lvlInfo.currentLevelXp;
+        this.activeRoom.xpNeeded = lvlInfo.xpNeeded;
+      }
+      if (this.members.has(this.clientId)) {
+        const me = this.members.get(this.clientId);
+        me.clicks = Math.max(0, Math.floor(Number(me.clicks) || 0)) + 1;
+      }
+      this._notifyUIState();
+
+      const clickPkt = {
+        action: 'GUEST_CLICK',
+        clientId: this.clientId,
+        clickId,
+        isAnonymous: false
+      };
+      if (this.guestWebRtcConn && this.guestWebRtcConn.open) {
+        try {
+          this.guestWebRtcConn.send(clickPkt);
+        } catch (_) {}
+      }
+      this._emitRoomPacket(this.activeRoom.id, 'HOST', clickPkt);
+    }
+    return true;
+  }
+
   sendMessage(text) {
     if (this.isAnonymous) return false;
     const clean = (text || '').trim();
@@ -1150,6 +1280,8 @@ class ZoriiEngine {
     this.role = null;
     this.activeRoom = null;
     this.members.clear();
+    this.playerClicks.clear();
+    this.processedClickIds.clear();
     this.spectators.clear();
     this.messages = [];
   }

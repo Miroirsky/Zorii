@@ -322,74 +322,144 @@
 
     <!-- 5. Room / Chat View -->
     <section id="view-room" class="view">
-      <div class="room-layout">
-        <!-- Left XP Sidebar: Vertical Bottom-to-Top Room XP Bar -->
-        <aside class="xp-sidebar">
-          <div class="xp-level-badge">
-            <span class="xp-level-label">LVL</span>
-            <span id="room-level-val" class="xp-level-num">1</span>
-          </div>
-          <div class="xp-bar-track">
-            <div id="room-xp-fill" class="xp-bar-fill" style="height: 0%;"></div>
-          </div>
-          <div id="room-xp-text" class="xp-bar-text">0 / 10 XP</div>
-        </aside>
+      <div id="room-layout" class="room-layout">
+        <div class="room-workspace">
+          <!-- Left XP Sidebar: Vertical Bottom-to-Top Room XP Bar -->
+          <aside class="xp-sidebar">
+            <div class="xp-level-badge">
+              <span class="xp-level-label">LVL</span>
+              <span id="room-level-val" class="xp-level-num">1</span>
+            </div>
+            <div class="xp-bar-track">
+              <div id="room-xp-fill" class="xp-bar-fill" style="height: 0%;"></div>
+            </div>
+            <div id="room-xp-text" class="xp-bar-text">0 / 10 XP</div>
+          </aside>
 
-        <!-- Main Chat Screen -->
-        <div class="chat-main">
-          <div class="room-bar">
-            <div class="room-meta">
-              <div class="room-title-row">
-                <h3 id="room-title"></h3>
-                <span id="room-host-tag" class="host-pill">P2P Host</span>
+          <!-- Main Chat Screen -->
+          <div class="chat-main">
+            <div class="room-bar">
+              <div class="room-meta">
+                <div class="room-title-row">
+                  <h3 id="room-title"></h3>
+                  <span id="room-host-tag" class="host-pill">P2P Host</span>
+                </div>
+                <p id="room-desc"></p>
               </div>
-              <p id="room-desc"></p>
+              <div class="room-controls">
+                <button id="btn-save-room" class="btn-code btn-save-room hidden" title="Save Room Stats (Levels, Clicks, Max Members)">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+                  <span>Save</span>
+                </button>
+                <button id="btn-copy-code" class="btn-code" title="Copy Room ID">
+                  <span id="room-code-text"></span>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                </button>
+                <button id="btn-leave-room" class="btn-icon btn-leave" title="Leave">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+                </button>
+              </div>
             </div>
-            <div class="room-controls">
-              <button id="btn-save-room" class="btn-code btn-save-room hidden" title="Save Room Stats (Levels, Max Members)">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
-                <span>Save</span>
+
+            <div id="chat-messages" class="chat-messages"></div>
+
+            <form id="form-chat" class="chat-input-bar" autocomplete="off">
+              <input
+                type="text"
+                id="input-chat"
+                placeholder="Message..."
+                maxlength="500"
+              />
+              <button type="submit" class="btn-send" title="Send">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
               </button>
-              <button id="btn-copy-code" class="btn-code" title="Copy Room ID">
-                <span id="room-code-text"></span>
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-              </button>
-              <button id="btn-leave-room" class="btn-icon btn-leave" title="Leave">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
-              </button>
+            </form>
+            <div id="chat-readonly-notice" class="chat-readonly-notice hidden">
+              Mode spectateur (anonyme) — lecture seule, envoi de messages désactivé
             </div>
           </div>
 
-          <div id="chat-messages" class="chat-messages"></div>
+          <!-- Right Sidebar: Connected Users & Spectators -->
+          <aside class="users-sidebar">
+            <div class="users-header">
+              <span>Membres</span>
+              <span id="users-count">0 / 0</span>
+            </div>
+            <div class="spectators-header">
+              <span>Spectateurs</span>
+              <span id="spectators-count" class="spectators-count-badge">0</span>
+            </div>
+            <ul id="users-list" class="users-list"></ul>
+          </aside>
 
-          <form id="form-chat" class="chat-input-bar" autocomplete="off">
-            <input
-              type="text"
-              id="input-chat"
-              placeholder="Message..."
-              maxlength="500"
-            />
-            <button type="submit" class="btn-send" title="Send">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-            </button>
-          </form>
-          <div id="chat-readonly-notice" class="chat-readonly-notice hidden">
-            Mode spectateur (anonyme) — lecture seule, envoi de messages désactivé
-          </div>
+          <!-- Dedicated Right Event Tab (Resizable up to 2/3 of the window) -->
+          <aside id="event-tab-panel" class="event-tab-panel hidden">
+            <div id="event-resize-handle" class="event-resize-handle" title="Drag to resize event tab (up to 2/3 of window)">
+              <span class="event-resize-grip"></span>
+            </div>
+
+            <div class="event-tab-content">
+              <div class="event-tab-header">
+                <div class="event-tab-title">
+                  <span class="event-live-dot"></span>
+                  <span>Clicker Event</span>
+                </div>
+                <div class="event-tab-actions">
+                  <div class="event-scale-group" title="Scale event tab width">
+                    <button type="button" class="btn-event-scale" data-scale="0.33">1/3</button>
+                    <button type="button" class="btn-event-scale" data-scale="0.5">1/2</button>
+                    <button type="button" class="btn-event-scale" data-scale="0.6667">2/3</button>
+                  </div>
+                  <button type="button" id="btn-close-event-tab" class="btn-event-close" title="Close Event Tab">×</button>
+                </div>
+              </div>
+
+              <!-- Clicker Event Body -->
+              <div id="event-view-clicker" class="event-view-body">
+                <div class="clicker-hero">
+                  <button type="button" id="btn-room-clicker" class="btn-room-clicker">
+                    <span class="clicker-btn-sub">TOTAL ROOM CLICKS</span>
+                    <span id="clicker-total-val" class="clicker-btn-total">0</span>
+                    <span class="clicker-btn-cta">CLICK!</span>
+                  </button>
+
+                  <div class="clicker-xp-card">
+                    <div class="clicker-xp-row">
+                      <span>Every 100 clicks = <strong>+1 Room XP</strong></span>
+                      <span id="clicker-xp-progress-label" class="clicker-xp-mono">0 / 100</span>
+                    </div>
+                    <div class="clicker-xp-track">
+                      <div id="clicker-xp-fill" class="clicker-xp-fill" style="width: 0%;"></div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="clicker-players-section">
+                  <div class="clicker-players-header">
+                    <span>Connected Players Clicks</span>
+                    <span class="clicker-host-badge">Host Server</span>
+                  </div>
+                  <ul id="clicker-players-list" class="clicker-players-list"></ul>
+                </div>
+              </div>
+            </div>
+          </aside>
         </div>
 
-        <!-- Right Sidebar: Connected Users & Spectators -->
-        <aside class="users-sidebar">
-          <div class="users-header">
-            <span>Membres</span>
-            <span id="users-count">0 / 0</span>
+        <!-- Bottom Events Bar -->
+        <div id="room-events-bar" class="room-events-bar">
+          <div class="events-bar-left">
+            <span class="event-live-dot"></span>
+            <span class="events-bar-title">Events</span>
           </div>
-          <div class="spectators-header">
-            <span>Spectateurs</span>
-            <span id="spectators-count" class="spectators-count-badge">0</span>
+          <div id="events-bar-list" class="events-bar-list">
+            <button type="button" id="btn-open-clicker-event" class="event-bar-item" data-event="clicker">
+              <span class="event-bar-icon">⚡</span>
+              <span class="event-bar-name">Room Clicker</span>
+              <span id="event-bar-clicker-count" class="event-bar-badge">0 clicks</span>
+            </button>
           </div>
-          <ul id="users-list" class="users-list"></ul>
-        </aside>
+        </div>
       </div>
     </section>
       </main>
